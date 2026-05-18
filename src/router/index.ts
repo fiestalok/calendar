@@ -15,7 +15,7 @@ import ReservationsView from '../views/ReservationsView.vue'
 import GammesView from '../views/GammesView.vue'
 
 const router = createRouter({
-  history: createWebHistory(),
+  history: createWebHistory(import.meta.env.BASE_URL),
   routes: [
     {
       path: '/login',
