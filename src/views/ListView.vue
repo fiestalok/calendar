@@ -72,15 +72,6 @@ onMounted(() => {
               <p class="text-sm text-base-content/60">
                 {{ fmtDate(r.date_start) }} → {{ fmtDate(r.date_end) }}
               </p>
-              <p
-                v-if="r.articles?.[0]?.articles_id?.name"
-                class="text-sm text-base-content/70 mt-0.5"
-              >
-                {{ r.articles[0].articles_id.name }}
-                <span v-if="r.articles.length > 1" class="text-base-content/40">
-                  +{{ r.articles.length - 1 }}
-                </span>
-              </p>
             </div>
             <StatusBadge :status="r.status" />
           </div>

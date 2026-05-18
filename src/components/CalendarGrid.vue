@@ -3,7 +3,7 @@ import { computed } from 'vue'
 import {
   startOfMonth, endOfMonth, eachDayOfInterval,
   startOfWeek, endOfWeek, isSameMonth, parseISO,
-  startOfDay, endOfDay
+  startOfDay, endOfDay, addDays, isSameDay
 } from 'date-fns'
 import CalendarDay from './CalendarDay.vue'
 
@@ -26,11 +26,21 @@ const days = computed(() => {
 const forDay = (day) => {
   const ds = startOfDay(day)
   const de = endOfDay(day)
-  return props.reservations.filter(r => {
-    const rs = startOfDay(parseISO(r.date_start))
-    const re = endOfDay(parseISO(r.date_end))
-    return rs <= de && re >= ds
-  })
+  const result = []
+  for (const r of props.reservations) {
+    const rs = parseISO(r.date_start)
+    const re = parseISO(r.date_end)
+    if (startOfDay(rs) <= de && endOfDay(re) >= ds) {
+      result.push({ ...r, _blocking: false, _isStart: isSameDay(rs, day), _isEnd: isSameDay(re, day) })
+    } else if (r.jours_avant_max || r.jours_apres_max) {
+      const bs = addDays(rs, -(r.jours_avant_max ?? 0))
+      const be = addDays(re,   r.jours_apres_max ?? 0)
+      if (startOfDay(bs) <= de && endOfDay(be) >= ds) {
+        result.push({ ...r, _blocking: true, _isStart: isSameDay(bs, day), _isEnd: isSameDay(be, day) })
+      }
+    }
+  }
+  return result
 }
 </script>
 

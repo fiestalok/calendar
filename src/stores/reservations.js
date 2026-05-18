@@ -1,5 +1,5 @@
 import { defineStore } from 'pinia'
-import { getReservations, patchReservation, authenticate } from '../api/directus'
+import { getReservations, getAllReservationsProduits, patchReservation } from '../api/directus'
 
 export const useReservationsStore = defineStore('reservations', {
   state: () => ({
@@ -19,11 +19,36 @@ export const useReservationsStore = defineStore('reservations', {
   },
   actions: {
     async fetchReservations() {
+      if (this.loading) return
       this.loading = true
       this.error = null
       try {
-        await authenticate()
-        this.reservations = await getReservations()
+        const [rawReservations, rawJunctions] = await Promise.all([
+          getReservations(),
+          getAllReservationsProduits(),
+        ])
+
+        // For each reservation: product names + max blocking days
+        const lookup = {}
+        for (const rp of rawJunctions) {
+          const id = rp.reservations_id
+          // produits_id can come back as an object {id,name,jours_avant,jours_apres}
+          // or as a bare integer if the relation didn't resolve — handle both
+          const prod = typeof rp.produits_id === 'object' ? rp.produits_id : null
+          if (!lookup[id]) lookup[id] = { jours_avant: 0, jours_apres: 0, noms: [] }
+          if (prod) {
+            lookup[id].jours_avant = Math.max(lookup[id].jours_avant, prod.jours_avant ?? 0)
+            lookup[id].jours_apres = Math.max(lookup[id].jours_apres, prod.jours_apres ?? 0)
+            if (prod.name && !lookup[id].noms.includes(prod.name)) lookup[id].noms.push(prod.name)
+          }
+        }
+
+        this.reservations = rawReservations.map(r => ({
+          ...r,
+          jours_avant_max: lookup[r.id]?.jours_avant ?? 0,
+          jours_apres_max: lookup[r.id]?.jours_apres ?? 0,
+          produit_noms:    lookup[r.id]?.noms         ?? [],
+        }))
       } catch (err) {
         this.error = err.message || 'Erreur de connexion au serveur'
       } finally {
