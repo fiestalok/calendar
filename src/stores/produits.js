@@ -13,6 +13,7 @@ function mapProduit(p) {
     description:      p.short_description ?? p.long_description ?? '',
     long_description: p.long_description ?? '',
     images_urls:      p.images_urls ?? [],
+    image:            p.image ?? null,
     specs:            p.specs ?? null,
     jours_avant:      p.jours_avant ?? 0,
     jours_apres:      p.jours_apres ?? 0,

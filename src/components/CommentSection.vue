@@ -1,4 +1,4 @@
-<script setup>
+﻿<script setup>
 import { ref, computed, onMounted, watch } from 'vue'
 import { useCommentsStore } from '../stores/comments'
 import { useAuthStore } from '../stores/auth'
@@ -70,7 +70,7 @@ function initials(name) {
         Aucun commentaire pour l'instant.
       </div>
       <div v-for="c in comments" :key="c.id" class="px-5 py-4 flex gap-3 group">
-        <div class="w-8 h-8 rounded-full bg-emerald-100 flex items-center justify-center text-xs font-bold text-emerald-600 flex-shrink-0">
+        <div class="w-8 h-8 rounded-full bg-blue-100 flex items-center justify-center text-xs font-bold text-blue-600 flex-shrink-0">
           {{ initials(c.author) }}
         </div>
         <div class="flex-1 min-w-0">
@@ -89,7 +89,7 @@ function initials(name) {
 
     <div class="border-t border-gray-100 p-4 bg-gray-50">
       <div class="flex items-center gap-3 mb-2">
-        <div class="w-7 h-7 rounded-full bg-emerald-100 flex items-center justify-center text-xs font-bold text-emerald-600 flex-shrink-0">
+        <div class="w-7 h-7 rounded-full bg-blue-100 flex items-center justify-center text-xs font-bold text-blue-600 flex-shrink-0">
           {{ initials(auth.displayName) }}
         </div>
         <span class="text-sm font-medium text-gray-700">{{ auth.displayName }}</span>

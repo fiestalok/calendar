@@ -1,4 +1,4 @@
-<script setup>
+﻿<script setup>
 import { computed, ref, watch } from 'vue'
 import { format, parseISO } from 'date-fns'
 import { fr } from 'date-fns/locale'
@@ -17,6 +17,7 @@ import {
   getReservationConsommables, createReservationConsommable, deleteReservationConsommable,
   patchConsommable, getGammeArticlesMateriel, getAllArticlesSecondaires, createGammeArticleMateriel,
   getArticles,
+  assetUrl,
 } from '../api/directus'
 import StatusBadge from './StatusBadge.vue'
 
@@ -47,6 +48,8 @@ const devisSigneInput    = ref(null)
 const previewArticle     = ref(null)
 const livraison          = ref(false)
 const installation       = ref(false)
+const distanceKm         = ref(0)
+const remise             = ref(false)
 
 // ── Consommables & setup par article ─────────────────────────────────────────
 // { [produitId]: [{ gamme: {id,nom}, consoItems: [...], materielArts: [...] }] }
@@ -179,6 +182,8 @@ watch(() => props.reservation?.id, async (id) => {
   validatedBy.value      = rawV ?? {}
   livraison.value        = !!(rawV?.livraison)
   installation.value     = !!(rawV?.installation)
+  distanceKm.value       = rawV?.distance_km ?? 0
+  remise.value           = !!(rawV?.remise)
   reservationConso.value = rawConso ?? []
   consoJunctionIds.value = (rawConso ?? []).map(r => r.id).filter(Boolean)
   await loadLinkedArticles(id)
@@ -188,7 +193,16 @@ watch(() => props.reservation?.status, () => { clientContacte.value = false; dev
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const client  = computed(() => props.reservation?.client)
-const fmtDate = (d) => d ? format(parseISO(d), "EEEE d MMMM yyyy", { locale: fr }) : '—'
+const fmtDate     = (d) => d ? format(parseISO(d), "EEEE d MMMM yyyy", { locale: fr }) : '—'
+const fmtTime     = (d) => { if (!d) return null; const dt = parseISO(d); const h = dt.getHours(); const m = dt.getMinutes(); return (h || m) ? `${String(h).padStart(2,'0')}h${m ? String(m).padStart(2,'0') : ''}` : null }
+const fmtDateLong = (d) => {
+  if (!d) return '—'
+  const dt = parseISO(d)
+  const base = format(dt, "EEE. d MMM yyyy", { locale: fr })
+  const h = dt.getHours(); const min = dt.getMinutes()
+  if (h === 0 && min === 0) return base
+  return `${base} ${String(h).padStart(2,'0')}h${min ? String(min).padStart(2,'0') : ''}`
+}
 
 const clientInitials = computed(() => {
   const c = client.value
@@ -209,18 +223,19 @@ const devisGenereUrl = computed(() =>
 const actions = computed(() => {
   const s = props.reservation?.status
   if (s === 'en_attente') return [
-    { key: 'quote',  label: 'Préparer un devis', status: 'devis_realise', cls: 'btn-primary' },
-    { key: 'cancel', label: 'Annuler',            status: 'annulee',       cls: 'btn-error btn-outline' },
+    { key: 'cancel', label: 'Annuler',                status: 'annulee',       cls: 'btn-error btn-outline' },
+    { key: 'send',   label: 'Devis envoyé au client', status: 'devis_realise', cls: 'btn-primary' },
   ]
   if (s === 'devis_realise') return [
-    { key: 'confirm', label: 'Confirmer la réservation', status: 'devis_confirme', cls: 'btn-success' },
-    { key: 'reset',   label: 'Remettre en attente',      status: 'en_attente',     cls: 'btn-ghost' },
-    { key: 'cancel',  label: 'Annuler',                  status: 'annulee',        cls: 'btn-error btn-outline' },
+    { key: 'cancel',  label: 'Annuler',              status: 'annulee',        cls: 'btn-error btn-outline' },
+    { key: 'reset',   label: 'Pas encore envoyé',   status: 'en_attente',     cls: 'btn-neutral btn-outline' },
+    { key: 'confirm', label: 'Devis signé reçu',    status: 'devis_confirme', cls: 'btn-primary' },
   ]
   if (s === 'devis_confirme') return [
-    { key: 'step_back', label: 'Revenir au devis réalisé', status: 'devis_realise', cls: 'btn-ghost btn-outline' },
+    { key: 'step_back', label: 'Revenir à l\'envoi', status: 'devis_realise', cls: 'btn-neutral btn-outline' },
+    { key: 'done',      label: 'Marquer terminé',    status: 'terminee',      cls: 'btn-primary' },
   ]
-  return [{ key: 'reset', label: 'Remettre en attente', status: 'en_attente', cls: 'btn-ghost' }]
+  return [{ key: 'reset', label: 'Remettre en attente', status: 'en_attente', cls: 'btn-neutral btn-outline' }]
 })
 
 const VALIDATED_FIELD = {
@@ -229,19 +244,30 @@ const VALIDATED_FIELD = {
   terminee:       'terminee_par',
 }
 
+const allProductsSetup = computed(() =>
+  produits.value.length > 0 &&
+  produits.value.every(p => productArticleGroups.value[p.produits_id?.id]?.principal?.length > 0)
+)
+
 const confirmBlocked = computed(() => {
-  if (props.reservation?.status !== 'devis_realise') return false
-  return !clientContacte.value || !devisGenereUrl.value
+  const s = props.reservation?.status
+  if (s === 'en_attente') return !allProductsSetup.value || !devisGenereUrl.value || !clientContacte.value
+  if (s === 'devis_realise') return !signedDevisUrl.value
+  return false
 })
 
 const confirmBlockedReason = computed(() => {
-  if (!clientContacte.value) return 'Cochez la confirmation client'
-  if (!devisGenereUrl.value) return 'Générez le devis'
+  const s = props.reservation?.status
+  if (s === 'en_attente') {
+    if (!allProductsSetup.value) return 'Configurez tous les produits'
+    if (!devisGenereUrl.value) return 'Générez le devis'
+    if (!clientContacte.value) return 'Cochez la confirmation client'
+  }
+  if (!signedDevisUrl.value) return 'Ajoutez le devis signé'
   return ''
 })
 
 async function act(action) {
-  if (action.key === 'quote') { await openArticleSelect(); return }
   if (action.key === 'step_back') { showConfirmedBackWarning.value = true; return }
   loading.value = action.key
   try {
@@ -253,22 +279,16 @@ async function act(action) {
       validatedBy.value = { ...validatedBy.value, fichier_devis_signe: uploaded.id }
     }
 
-    if (action.status === 'en_attente' && props.reservation?.status === 'devis_realise') {
-      for (const jId of junctionIds.value) await deleteReservationArticle(jId).catch(() => {})
-      junctionIds.value    = []
-      linkedArticles.value = []
-
+    if (action.status === 'terminee') {
       for (const row of reservationConso.value) {
         const cid = row.consommable_id?.id ?? row.consommable_id
         if (cid && row.quantite) {
-          const item = allConsoItemsFlat.value.find(c => c.id === cid)
-          const currentStock = item?.stock ?? 0
-          await patchConsommable(cid, { stock: currentStock + row.quantite }).catch(() => {})
+          const item = allConsoItemsFlat.value.find(c => c.consommable_id?.id === cid)
+          const newStock = Math.max(0, (item?.consommable_id?.stock ?? 0) - row.quantite)
+          await patchConsommable(cid, { stock: newStock }).catch(() => {})
+          if (item?.consommable_id) item.consommable_id.stock = newStock
         }
-        await deleteReservationConsommable(row.id).catch(() => {})
       }
-      reservationConso.value = []
-      consoJunctionIds.value = []
     }
 
     await store.updateStatus(props.reservation.id, action.status)
@@ -304,208 +324,406 @@ async function uploadDevisSigne() {
   }
 }
 
-async function toggleLivraison(val) {
-  livraison.value = val
-  if (!val) installation.value = false
-  await patchReservation(props.reservation.id, { livraison: val, installation: val ? installation.value : false }).catch(() => {})
+const factureFile  = ref(null)
+const factureInput = ref(null)
+const factureUrl   = computed(() =>
+  validatedBy.value.fichier_facture ? getFileUrl(validatedBy.value.fichier_facture) : null
+)
+
+function onFactureChange(e) {
+  factureFile.value = e.target.files?.[0] ?? null
 }
 
-async function toggleInstallation(val) {
+async function uploadFacture() {
+  if (!factureFile.value) return
+  loading.value = 'upload_facture'
+  try {
+    const fd = new FormData()
+    fd.append('file', factureFile.value)
+    const uploaded = await uploadFile(fd)
+    await patchReservation(props.reservation.id, { fichier_facture: uploaded.id })
+    validatedBy.value = { ...validatedBy.value, fichier_facture: uploaded.id }
+    factureFile.value = null
+    showToast('Facture enregistrée', 'success')
+  } catch (err) {
+    showToast(err?.message ?? 'Erreur upload facture', 'error')
+  } finally {
+    loading.value = null
+  }
+}
+
+async function toggleLivraison(val) {
+  livraison.value = val
   installation.value = val
-  await patchReservation(props.reservation.id, { installation: val }).catch(() => {})
+  if (!val) distanceKm.value = 0
+  await patchReservation(props.reservation.id, { livraison: val, installation: val, distance_km: val ? distanceKm.value : 0 }).catch(() => {})
+}
+
+function livraisonFee(km) {
+  if (km <= 15)  return 20
+  if (km <= 30)  return 40
+  if (km <= 50)  return 65
+  if (km <= 80)  return 100
+  if (km <= 120) return 150
+  return 150 + (km - 120)
+}
+
+const livraisonMontant   = computed(() => livraison.value ? livraisonFee(distanceKm.value) : 0)
+const livraisonZoneIdx   = computed(() => {
+  const km = distanceKm.value
+  if (km <= 15)  return 0
+  if (km <= 30)  return 1
+  if (km <= 50)  return 2
+  if (km <= 80)  return 3
+  if (km <= 120) return 4
+  return 5
+})
+
+async function saveDistance() {
+  await patchReservation(props.reservation.id, { distance_km: distanceKm.value }).catch(() => {})
+}
+
+const produitsTotalTTC = computed(() =>
+  produits.value.reduce((sum, p) => {
+    const price = p.unit_price ?? p.produits_id?.prix_location ?? 0
+    return sum + price * (p.quantity || 1)
+  }, 0)
+)
+const remiseMontantTTC = computed(() => {
+  if (!remise.value) return 0
+  return Math.min(livraisonMontant.value, 50)
+})
+const remiseDescription = computed(() => {
+  if (!remise.value) return ''
+  return livraisonMontant.value <= 50
+    ? 'Livraison & installation offerts'
+    : 'Livraison & installation offerts (plafond 50 €)'
+})
+async function toggleRemise(val) {
+  remise.value = val
+  await patchReservation(props.reservation.id, { remise: val }).catch(() => {})
 }
 
 async function generateDevis() {
   loading.value = 'generate_devis'
   try {
+    const logoImg = await new Promise((resolve, reject) => {
+      const img = new Image()
+      img.onload = () => resolve(img)
+      img.onerror = reject
+      img.src = import.meta.env.BASE_URL + 'Logo.png'
+    })
+
     const { jsPDF } = await import('jspdf')
-    const doc    = new jsPDF({ unit: 'mm', format: 'a4' })
-    const r      = props.reservation
-    const c      = client.value
-    const now    = format(new Date(), 'dd/MM/yyyy')
-    const W      = 210
-    const M      = 14
-    const INNER  = W - M * 2
-    const PURPLE = [5, 150, 105]
-    const LPURPLE= [209, 250, 229]
-    const GREY   = [248, 248, 252]
-    const DGREY  = [100, 100, 110]
-    const pageH  = 297
-    let y        = 0
+    const doc = new jsPDF({ unit: 'mm', format: 'a4' })
+    const r   = props.reservation
+    const c   = client.value
+    const now = format(new Date(), 'dd/MM/yyyy')
+    const W = 210, M = 10, INNER = 190, pageH = 297, TVA = 0.20
+    const FOOTER_H = 18, USABLE = pageH - FOOTER_H - 4
 
-    const addPage    = () => { doc.addPage(); y = 20 }
-    const checkPage  = (needed = 10) => { if (y + needed > pageH - 18) addPage() }
-    const setColor   = (rgb) => doc.setTextColor(...rgb)
+    const TEAL  = [0, 84, 115]
+    const LTEAL = [220, 238, 248]
+    const MGREY = [240, 240, 242]
+    const LGREY = [200, 200, 205]
+    const DGREY = [100, 100, 110]
+    const BLACK = [20, 20, 30]
+    const WHITE = [255, 255, 255]
 
-    const sectionTitle = (title) => {
-      checkPage(14)
-      y += 6
-      doc.setFillColor(...PURPLE)
-      doc.rect(M, y, INNER, 8, 'F')
-      doc.setFontSize(9); doc.setFont('helvetica', 'bold'); doc.setTextColor(255, 255, 255)
-      doc.text(title.toUpperCase(), M + 4, y + 5.5)
-      setColor([0, 0, 0])
-      y += 12
+    let y = 0
+    const addPage   = () => { doc.addPage(); y = 14 }
+    const checkPage = (n = 10) => { if (y + n > USABLE) addPage() }
+    const setColor  = (rgb) => doc.setTextColor(...rgb)
+
+    // ── Helpers ───────────────────────────────────────────────────────────────
+    let sectionNum = 0
+    const sectionHeader = (title) => {
+      checkPage(10); y += 4
+      sectionNum++
+      doc.setFillColor(...TEAL); doc.rect(M, y, INNER, 7, 'F')
+      doc.setFontSize(8.5); doc.setFont('helvetica', 'bold'); setColor(WHITE)
+      doc.text(`${sectionNum}. ${title.toUpperCase()}`, M + 4, y + 5)
+      y += 10
     }
 
     const drawTable = (cols, rows) => {
-      const rowH = 7; const headerH = 7
-      checkPage(headerH + rowH)
-      doc.setFillColor(...LPURPLE)
-      doc.rect(M, y, INNER, headerH, 'F')
-      doc.setFontSize(8.5); doc.setFont('helvetica', 'bold'); setColor([50, 30, 100])
+      const headerH = 6.5
+      checkPage(headerH + 6)
+      doc.setFillColor(...LTEAL); doc.rect(M, y, INNER, headerH, 'F')
+      doc.setFontSize(7.5); doc.setFont('helvetica', 'bold'); setColor(TEAL)
       for (const col of cols) {
         const align = col.align ?? 'left'
-        const tx = align === 'right' ? col.x + col.w - 2 : col.x + 2
-        doc.text(col.label, tx, y + 5, { align })
+        doc.text(col.label, align === 'right' ? col.x + col.w - 2 : col.x + 2, y + 4.5, { align })
       }
       y += headerH
-      doc.setFont('helvetica', 'normal'); doc.setFontSize(8.5)
       let odd = false
       for (const row of rows) {
+        const cells = row.cells ?? row
+        const sub   = row.subtitle ?? null
+        const rowH  = sub ? 10 : 6
         checkPage(rowH + 2)
-        if (odd) { doc.setFillColor(...GREY); doc.rect(M, y, INNER, rowH, 'F') }
+        if (odd) { doc.setFillColor(...MGREY); doc.rect(M, y, INNER, rowH, 'F') }
         odd = !odd
-        doc.setDrawColor(220, 220, 230); doc.line(M, y + rowH, M + INNER, y + rowH)
-        setColor([30, 30, 40])
+        doc.setDrawColor(...LGREY); doc.setLineWidth(0.1)
+        doc.line(M, y + rowH, M + INNER, y + rowH)
+        doc.setFontSize(8); doc.setFont('helvetica', 'normal'); setColor(BLACK)
         for (let i = 0; i < cols.length; i++) {
-          const col   = cols[i]
-          const cell  = String(row[i] ?? '—')
+          const col = cols[i]; const cell = String(cells[i] ?? '—')
           const align = col.align ?? 'left'
-          const tx    = align === 'right' ? col.x + col.w - 2 : col.x + 2
-          const maxW  = col.w - 4
-          const fitted  = doc.splitTextToSize(cell, maxW)[0] ?? cell
-          const clipped = fitted.length < cell.length ? fitted.slice(0, -1) + '…' : fitted
-          doc.text(clipped, tx, y + 5, { align })
+          const tx = align === 'right' ? col.x + col.w - 2 : col.x + 2
+          doc.text((doc.splitTextToSize(cell, col.w - 4)[0] ?? cell), tx, sub ? y + 4 : y + 4.5, { align })
         }
+        if (sub) { doc.setFontSize(7); doc.setFont('helvetica', 'italic'); setColor(DGREY); doc.text(sub, cols[0].x + 2, y + 8.5) }
         y += rowH
       }
-      y += 2
+      doc.setDrawColor(...LGREY); doc.line(M, y, M + INNER, y)
+      y += 4
     }
 
-    doc.setFillColor(...PURPLE); doc.rect(0, 0, W, 32, 'F')
-    doc.setFontSize(22); doc.setFont('helvetica', 'bold'); doc.setTextColor(255, 255, 255)
-    doc.text('FIESTALOK', M, 14)
-    doc.setFontSize(9); doc.setFont('helvetica', 'normal')
-    doc.text('Location de structures gonflables', M, 21)
-    doc.setFontSize(18); doc.setFont('helvetica', 'bold')
-    doc.text('DEVIS', W - M, 13, { align: 'right' })
-    doc.setFontSize(9); doc.setFont('helvetica', 'normal')
-    doc.text(`N° ${r.id}  •  Émis le ${now}`, W - M, 20, { align: 'right' })
-    y = 38
+    const drawCardHeader = (bx, bW, label) => {
+      doc.setFillColor(...LTEAL)
+      doc.roundedRect(bx, y, bW, 6, 1.5, 1.5, 'F')
+      doc.rect(bx, y + 3, bW, 3, 'F')
+      doc.setFontSize(7); doc.setFont('helvetica', 'bold'); setColor(TEAL)
+      doc.text(label, bx + 3, y + 4.2)
+    }
 
-    const clientLines = []
+    // ── HEADER BAND (28mm) ────────────────────────────────────────────────────
+    const HEADER_H = 28
+    doc.setFillColor(...TEAL); doc.rect(0, 0, W, HEADER_H, 'F')
+    doc.addImage(logoImg, 'PNG', M + 2, 4, 44, 18)
+    doc.setFontSize(9); doc.setFont('helvetica', 'normal'); setColor([190, 220, 235])
+    doc.text('Location de matériel festif', M + 2, HEADER_H - 4)
+    doc.setFontSize(22); doc.setFont('helvetica', 'bold'); setColor(WHITE)
+    doc.text('DEVIS', W - M, 18, { align: 'right' })
+    doc.setFontSize(8); doc.setFont('helvetica', 'normal'); setColor([190, 220, 235])
+    doc.text(`N° ${r.id}`, W - M, 24, { align: 'right' })
+    doc.text(`Émis le ${now}`, W - M, HEADER_H - 2, { align: 'right' })
+    y = HEADER_H + 6
+
+    // ── INFO : 3 cards (CLIENT | PÉRIODE | LOGISTIQUE) ───────────────────────
+    const GAP = 6
+    const cW_c = 85, cW_p = 44, cW_l = INNER - cW_c - cW_p - GAP * 2
+    const x_p  = M + cW_c + GAP
+    const x_l  = x_p + cW_p + GAP
+
     const fullName = `${c?.first_name ?? ''} ${c?.last_name ?? ''}`.trim()
-    if (c?.company_name) clientLines.push(c.company_name)
-    if (fullName)        clientLines.push(fullName)
-    if (c?.email)        clientLines.push(c.email)
-    if (c?.phone)        clientLines.push(c.phone)
-    if (c?.city)         clientLines.push(c.city)
-    const cardH = Math.max(28, 10 + clientLines.length * 5.5)
+    const cLines = [
+      c?.company_name ? { t: c.company_name, bold: true,  sz: 9 }   : null,
+      fullName        ? { t: fullName, bold: !c?.company_name, sz: 8.5 } : null,
+      c?.phone        ? { t: c.phone,  bold: false, sz: 8 }   : null,
+      c?.email        ? { t: c.email,  bold: false, sz: 7.5 } : null,
+      (c?.zip_code || c?.city) ? { t: [c?.zip_code, c?.city].filter(Boolean).join(' '), bold: false, sz: 8 } : null,
+    ].filter(Boolean)
+    const cardH = Math.max(32, 10 + cLines.length * 5)
 
-    doc.setFillColor(...GREY); doc.roundedRect(M, y, 85, cardH, 2, 2, 'F')
-    doc.setDrawColor(...LPURPLE); doc.roundedRect(M, y, 85, cardH, 2, 2, 'S')
-    doc.setFontSize(7.5); doc.setFont('helvetica', 'bold'); setColor([...PURPLE])
-    doc.text('CLIENT', M + 4, y + 5.5)
+    // CLIENT card
+    doc.setFillColor(...MGREY); doc.setDrawColor(...LGREY); doc.setLineWidth(0.3)
+    doc.roundedRect(M, y, cW_c, cardH, 1.5, 1.5, 'FD')
+    drawCardHeader(M, cW_c, 'CLIENT')
     let cy = y + 11
-    doc.setFontSize(9.5); doc.setFont('helvetica', 'bold'); setColor([20, 20, 30])
-    doc.text(clientLines[0] ?? '—', M + 4, cy); cy += 5.5
-    doc.setFontSize(8.5); doc.setFont('helvetica', 'normal'); setColor([60, 60, 70])
-    for (const l of clientLines.slice(1)) { doc.text(l, M + 4, cy); cy += 5 }
+    for (const l of cLines) {
+      doc.setFontSize(l.sz); doc.setFont('helvetica', l.bold ? 'bold' : 'normal'); setColor(BLACK)
+      doc.text(l.t, M + 3, cy); cy += 5
+    }
 
-    doc.setFillColor(...GREY); doc.roundedRect(106, y, 45, cardH, 2, 2, 'F')
-    doc.setDrawColor(...LPURPLE); doc.roundedRect(106, y, 45, cardH, 2, 2, 'S')
-    doc.setFontSize(7.5); doc.setFont('helvetica', 'bold'); setColor([...PURPLE])
-    doc.text('PÉRIODE', 110, y + 5.5)
-    doc.setFontSize(9); doc.setFont('helvetica', 'normal'); setColor([20, 20, 30])
-    doc.text(`Du  ${fmtDate(r.date_start)}`, 110, y + 13)
-    doc.text(`Au  ${fmtDate(r.date_end)}`, 110, y + 20)
+    // PÉRIODE card
+    doc.setFillColor(...MGREY); doc.setDrawColor(...LGREY)
+    doc.roundedRect(x_p, y, cW_p, cardH, 1.5, 1.5, 'FD')
+    drawCardHeader(x_p, cW_p, 'PÉRIODE')
+    doc.setFontSize(8); doc.setFont('helvetica', 'bold'); setColor(BLACK)
+    doc.text('Début :', x_p + 3, y + 11)
+    doc.setFont('helvetica', 'normal')
+    doc.text(fmtDateLong(r.date_start), x_p + 3, y + 16)
+    doc.setFont('helvetica', 'bold')
+    doc.text('Fin :', x_p + 3, y + 22)
+    doc.setFont('helvetica', 'normal')
+    doc.text(fmtDateLong(r.date_end), x_p + 3, y + 27)
 
-    doc.setFillColor(...GREY); doc.roundedRect(157, y, 39, cardH, 2, 2, 'F')
-    doc.setDrawColor(...LPURPLE); doc.roundedRect(157, y, 39, cardH, 2, 2, 'S')
-    doc.setFontSize(7.5); doc.setFont('helvetica', 'bold'); setColor([...PURPLE])
-    doc.text('LOGISTIQUE', 161, y + 5.5)
-    doc.setFontSize(8.5); doc.setFont('helvetica', 'normal'); setColor([20, 20, 30])
-    doc.text(`Livraison :    ${livraison.value ? 'Oui' : 'Non'}`, 161, y + 13)
-    doc.text(`Installation : ${installation.value ? 'Oui' : 'Non'}`, 161, y + 20)
+    // LOGISTIQUE card
+    doc.setFillColor(...MGREY); doc.setDrawColor(...LGREY)
+    doc.roundedRect(x_l, y, cW_l, cardH, 1.5, 1.5, 'FD')
+    drawCardHeader(x_l, cW_l, 'LOGISTIQUE')
+    let ly = y + 11
+    if (livraison.value) {
+      const zone = distanceKm.value <= 15 ? '0–15 km' : distanceKm.value <= 30 ? '15–30 km'
+                 : distanceKm.value <= 50 ? '30–50 km' : distanceKm.value <= 80 ? '50–80 km'
+                 : distanceKm.value <= 120 ? '80–120 km' : '> 120 km'
+      doc.setFontSize(7.5); doc.setFont('helvetica', 'bold'); setColor(TEAL)
+      doc.text('Livraison & installation', x_l + 3, ly); ly += 5
+      doc.setFont('helvetica', 'normal'); setColor(BLACK)
+      doc.text(`Forfait ${zone}`, x_l + 3, ly); ly += 5
+    } else {
+      doc.setFontSize(7.5); doc.setFont('helvetica', 'italic'); setColor(DGREY)
+      doc.text('Livraison : non', x_l + 3, ly); ly += 5
+    }
+    if (r.delivery_address) {
+      doc.setFontSize(7); doc.setFont('helvetica', 'bold'); setColor(TEAL)
+      doc.text('Lieu :', x_l + 3, ly); ly += 4
+      doc.setFont('helvetica', 'normal'); setColor(DGREY)
+      for (const al of r.delivery_address.split('\n').map(l => l.trim()).filter(Boolean).slice(0, 2)) {
+        doc.text(al, x_l + 3, ly); ly += 3.5
+      }
+    }
     y += cardH + 6
 
-    if (r.total_price) {
-      doc.setFillColor(...PURPLE); doc.roundedRect(M, y, INNER, 12, 2, 2, 'F')
-      doc.setFontSize(10); doc.setFont('helvetica', 'bold'); setColor([255, 255, 255])
-      doc.text('TOTAL', M + 6, y + 8)
-      doc.setFontSize(12)
-      doc.text(`${r.total_price} €`, W - M - 4, y + 8, { align: 'right' })
-      setColor([0, 0, 0]); y += 16
+    // ── 1. PRODUITS ───────────────────────────────────────────────────────────
+    sectionHeader('Produits réservés')
+    drawTable([
+      { label: 'Désignation', x: M,       w: 88 },
+      { label: 'Qté',         x: M + 88,  w: 14, align: 'right' },
+      { label: 'P.U. HT',    x: M + 102, w: 29, align: 'right' },
+      { label: 'P.U. TTC',   x: M + 131, w: 29, align: 'right' },
+      { label: 'Total TTC',  x: M + 160, w: 30, align: 'right' },
+    ], produits.value.map(p => {
+      const qty = p.quantity ?? 1
+      const ttc = p.unit_price ? Number(p.unit_price) : (p.produits_id?.prix_location ? Number(p.produits_id.prix_location) : null)
+      const ht  = ttc != null ? ttc / (1 + TVA) : null
+      const st  = ttc != null ? qty * ttc : null
+      return [p.produits_id?.name ?? '—', qty, ht != null ? `${ht.toFixed(2)} €` : '—', ttc != null ? `${ttc.toFixed(2)} €` : '—', st != null ? `${st.toFixed(2)} €` : '—']
+    }))
+
+    // ── 2. LIVRAISON & INSTALLATION ───────────────────────────────────────────
+    if (livraison.value) {
+      sectionHeader('Livraison & Installation')
+      const fee  = livraisonMontant.value
+      const zone = distanceKm.value <= 15 ? '0–15 km' : distanceKm.value <= 30 ? '15–30 km'
+                 : distanceKm.value <= 50 ? '30–50 km' : distanceKm.value <= 80 ? '50–80 km'
+                 : distanceKm.value <= 120 ? '80–120 km' : '> 120 km'
+      drawTable([
+        { label: 'Prestation',  x: M,       w: 120 },
+        { label: 'Forfait',     x: M + 120, w: 30, align: 'right' },
+        { label: 'Montant TTC', x: M + 150, w: 40, align: 'right' },
+      ], [['Livraison, installation & déinstallation', zone, `${fee.toFixed(2)} €`]])
     }
 
-    sectionTitle('1. Produits réservés')
-    drawTable(
-      [{ label: 'Produit', x: M, w: 100 }, { label: 'Qté', x: M+100, w: 20, align: 'right' }, { label: 'Prix unitaire', x: M+120, w: 35, align: 'right' }, { label: 'Sous-total', x: M+155, w: 27, align: 'right' }],
-      produits.value.map(p => {
-        const qty = p.quantity ?? 1; const unit = p.unit_price ? Number(p.unit_price) : null
-        return [p.produits_id?.name ?? '—', qty, unit ? `${unit} €` : '—', unit ? `${(qty * unit).toFixed(2)} €` : '—']
-      })
-    )
+    // ── 3. RÉCAPITULATIF FINANCIER ────────────────────────────────────────────
+    sectionHeader('Récapitulatif financier')
 
-    const principalArticles = linkedArticles.value.filter(la => la.article?.type !== 'secondaire')
-    if (principalArticles.length) {
-      sectionTitle('2. Matériel principal')
-      drawTable(
-        [{ label: 'Référence', x: M, w: 60 }, { label: 'Description', x: M+60, w: 82 }, { label: 'Entrepôt', x: M+142, w: 40 }],
-        principalArticles.map(la => {
-          const art = la.article
-          return [art?.reference ?? '—', art?.notes ?? art?.produit_id?.name ?? '', art?.entrepot_id?.nom ?? '—']
-        })
-      )
+    let soustotalTTC = produits.value.reduce((acc, p) => {
+      const qty = p.quantity ?? 1
+      const ttc = p.unit_price ? Number(p.unit_price) : (p.produits_id?.prix_location ? Number(p.produits_id.prix_location) : 0)
+      return acc + qty * ttc
+    }, 0)
+    if (livraison.value) soustotalTTC += livraisonMontant.value
+    const remiseTTC = remiseMontantTTC.value
+    const totalTTC  = soustotalTTC - remiseTTC
+    const totalHT   = totalTTC / 1.2
+    const soustHT   = soustotalTTC / 1.2
+    const remiseHT  = remiseTTC / 1.2
+    const tvaAmt    = totalTTC - totalHT
+
+    checkPage(52)
+    const sumX = W - M - 80, sumW = 80
+    const summaryRows = [
+      ['Sous-total HT', `${soustHT.toFixed(2)} €`, false],
+      ...(remiseTTC > 0 ? [['Remise (HT)', `−${remiseHT.toFixed(2)} €`, false]] : []),
+      ['Total HT',  `${totalHT.toFixed(2)} €`, false],
+      ['TVA 20 %',  `${tvaAmt.toFixed(2)} €`,  false],
+      ['TOTAL TTC', `${totalTTC.toFixed(2)} €`, true ],
+    ]
+    for (const [label, val, bold] of summaryRows) {
+      const rH = bold ? 9 : 6.5
+      if (bold) {
+        doc.setFillColor(...TEAL); doc.rect(sumX, y, sumW, rH, 'F')
+        doc.setFontSize(10); doc.setFont('helvetica', 'bold'); setColor(WHITE)
+      } else {
+        doc.setFillColor(...LTEAL); doc.rect(sumX, y, sumW, rH, 'F')
+        doc.setDrawColor(...LGREY); doc.setLineWidth(0.1)
+        doc.line(sumX, y + rH, sumX + sumW, y + rH)
+        doc.setFontSize(8.5); doc.setFont('helvetica', 'normal'); setColor(BLACK)
+      }
+      doc.text(label, sumX + 3, y + (bold ? 6.5 : 4.5))
+      doc.text(val,   sumX + sumW - 3, y + (bold ? 6.5 : 4.5), { align: 'right' })
+      y += rH + 0.5
     }
+    y += 4
 
-    sectionTitle('3. Consommables')
-    if (reservationConso.value.length) {
-      drawTable(
-        [{ label: 'Consommable', x: M, w: 80 }, { label: 'Type', x: M+80, w: 35 }, { label: 'Qté', x: M+115, w: 22, align: 'right' }, { label: 'Unité', x: M+137, w: 22, align: 'right' }, { label: 'Prix unit.', x: M+159, w: 23, align: 'right' }],
-        reservationConso.value.map(rc => [rc.consommable_id?.nom ?? '—', rc.consommable_id?.type ?? '—', rc.quantite ?? 1, rc.consommable_id?.unite ?? '—', rc.consommable_id?.prix_unitaire ? `${rc.consommable_id.prix_unitaire} €` : '—'])
-      )
-    } else {
-      checkPage(8); doc.setFontSize(8.5); doc.setFont('helvetica', 'italic'); setColor([...DGREY])
-      doc.text('Aucun consommable associé à cette réservation.', M + 4, y + 5); y += 10
-    }
-
-    const annexeArticles = linkedArticles.value.filter(la => la.article?.type === 'secondaire')
-    if (annexeArticles.length) {
-      sectionTitle('4. Matériel annexe')
-      drawTable(
-        [{ label: 'Référence', x: M, w: 70 }, { label: 'Description', x: M+70, w: 112 }],
-        annexeArticles.map(la => [la.article?.reference ?? '—', la.article?.notes ?? la.article?.produit_id?.name ?? ''])
-      )
+    if (remiseTTC > 0) {
+      checkPage(10)
+      doc.setFillColor(...LTEAL); doc.roundedRect(M, y, INNER, 7, 1, 1, 'F')
+      doc.setFontSize(7.5); doc.setFont('helvetica', 'italic'); setColor(TEAL)
+      doc.text(`Remise appliquée : ${remiseDescription.value}`, M + 3, y + 4.8)
+      y += 11
     }
 
     if (r.notes) {
-      checkPage(20); y += 4
-      doc.setFillColor(...GREY); doc.roundedRect(M, y, INNER, 6, 1, 1, 'F')
-      doc.setFontSize(8); doc.setFont('helvetica', 'bold'); setColor([...PURPLE])
-      doc.text('NOTES', M + 4, y + 4.5); y += 9
-      doc.setFontSize(8.5); doc.setFont('helvetica', 'normal'); setColor([40, 40, 50])
+      checkPage(14)
+      doc.setFillColor(...LTEAL); doc.roundedRect(M, y, INNER, 5.5, 1, 1, 'F')
+      doc.setFontSize(7); doc.setFont('helvetica', 'bold'); setColor(TEAL)
+      doc.text('NOTES', M + 3, y + 4); y += 7
+      doc.setFontSize(7.5); doc.setFont('helvetica', 'normal'); setColor([40, 40, 50])
       const noteLines = doc.splitTextToSize(r.notes, INNER - 4)
-      checkPage(noteLines.length * 5 + 4); doc.text(noteLines, M + 2, y); y += noteLines.length * 5 + 4
+      checkPage(noteLines.length * 4.5 + 4); doc.text(noteLines, M + 2, y)
+      y += noteLines.length * 4.5 + 4
     }
 
-    const totalPages = doc.getNumberOfPages()
-    for (let p = 1; p <= totalPages; p++) {
-      doc.setPage(p); doc.setFillColor(...PURPLE); doc.rect(0, pageH - 12, W, 12, 'F')
-      doc.setFontSize(7.5); doc.setFont('helvetica', 'normal'); setColor([200, 190, 240])
-      doc.text('Ce devis est valable 30 jours à compter de sa date d\'émission — fiestalok.fr', W / 2, pageH - 5.5, { align: 'center' })
-      doc.text(`Page ${p} / ${totalPages}`, W - M, pageH - 5.5, { align: 'right' })
+    // ── SIGNATURES (collées en bas de page) ───────────────────────────────────
+    const colW = (INNER - 4) / 2
+    const sigH = 28
+    const sigY = pageH - FOOTER_H - sigH - 10
+    if (y > sigY) addPage()
+    doc.setFillColor(...MGREY); doc.setDrawColor(...LGREY); doc.setLineWidth(0.3)
+    doc.roundedRect(M,            sigY, colW, sigH, 1.5, 1.5, 'FD')
+    doc.roundedRect(M + colW + 4, sigY, colW, sigH, 1.5, 1.5, 'FD')
+    doc.setFillColor(...LTEAL)
+    doc.roundedRect(M,            sigY, colW, 6, 1.5, 1.5, 'F')
+    doc.rect(M,            sigY + 3, colW, 3, 'F')
+    doc.roundedRect(M + colW + 4, sigY, colW, 6, 1.5, 1.5, 'F')
+    doc.rect(M + colW + 4, sigY + 3, colW, 3, 'F')
+    doc.setFontSize(7); doc.setFont('helvetica', 'bold'); setColor(TEAL)
+    doc.text('LE CLIENT', M + 3, sigY + 4.2)
+    doc.text("FIESTALO'K", M + colW + 7, sigY + 4.2)
+    doc.setFontSize(6.5); doc.setFont('helvetica', 'italic'); setColor(DGREY)
+    doc.text('Mention « Bon pour accord » + date + signature', M + 3, sigY + 10)
+    doc.text('Cachet et signature', M + colW + 7, sigY + 10)
+
+    // ── FOOTER SUR TOUTES LES PAGES DEVIS ─────────────────────────────────────
+    const devisPageCount = doc.getNumberOfPages()
+    for (let p = 1; p <= devisPageCount; p++) {
+      doc.setPage(p)
+      doc.setFillColor(...TEAL); doc.rect(0, pageH - FOOTER_H, W, FOOTER_H, 'F')
+      doc.setFontSize(8); doc.setFont('helvetica', 'normal'); setColor(WHITE)
+      doc.text('06 61 00 50 39',   W * 0.2, pageH - 10, { align: 'center' })
+      doc.text('www.fiestalok.fr', W * 0.5, pageH - 10, { align: 'center' })
+      doc.text('@fiestalok',       W * 0.8, pageH - 10, { align: 'center' })
+      doc.setFontSize(6.5); doc.setFont('helvetica', 'italic'); setColor([180, 210, 225])
+      doc.text("Ce devis est valable 30 jours à compter de sa date d'émission", W / 2, pageH - 4, { align: 'center' })
     }
 
-    const blob = doc.output('blob'); const fd = new FormData()
+    // ── FUSION AVEC CGV ───────────────────────────────────────────────────────
+    const { PDFDocument } = await import('pdf-lib')
+    const devisBytes = doc.output('arraybuffer')
+    const dPdf = await PDFDocument.load(devisBytes)
+
+    let finalBytes
+    try {
+      const cgvResp  = await fetch(import.meta.env.BASE_URL + 'CGV_HopLaLok.pdf')
+      if (!cgvResp.ok) throw new Error('CGV not found')
+      const cgvBytes = await cgvResp.arrayBuffer()
+      const cgvPdf   = await PDFDocument.load(cgvBytes)
+      const merged   = await PDFDocument.create()
+      const dPages   = await merged.copyPages(dPdf, dPdf.getPageIndices())
+      dPages.forEach(pg => merged.addPage(pg))
+      const cPages   = await merged.copyPages(cgvPdf, cgvPdf.getPageIndices())
+      cPages.forEach(pg => merged.addPage(pg))
+      finalBytes = await merged.save()
+    } catch {
+      finalBytes = await dPdf.save()
+    }
+
+    const blob = new Blob([finalBytes], { type: 'application/pdf' })
+    const fd   = new FormData()
     fd.append('file', blob, `devis-reservation-${r.id}.pdf`)
     const uploaded = await uploadFile(fd)
     await patchReservation(r.id, { fichier_devis: uploaded.id })
     validatedBy.value = { ...validatedBy.value, fichier_devis: uploaded.id }
     showToast('Devis généré avec succès', 'success')
   } catch (err) {
-    console.error(err); showToast(err?.message ?? 'Erreur génération devis', 'error')
+    console.error(err)
+    const apiMsg = err?.response?.data?.errors?.[0]?.message ?? ''
+    const isAuth = err?.response?.status === 401 || apiMsg.toLowerCase().includes('token')
+    showToast(isAuth ? 'Session expirée – reconnectez-vous' : (apiMsg || err?.message || 'Erreur génération devis'), 'error')
   } finally {
     loading.value = null
   }
@@ -601,7 +819,15 @@ async function confirmArticles() {
     }
 
     await loadLinkedArticles(props.reservation.id)
-    await openSetupList()
+    const targetProduit = postArticleSelectProduit.value
+    postArticleSelectProduit.value = null
+    if (targetProduit) {
+      setupFromDetail.value = true
+      await openSetupList()
+      goToSetupArticle(targetProduit)
+    } else {
+      await openSetupList()
+    }
   } catch (err) {
     showToast(err?.response?.data?.errors?.[0]?.message ?? err?.message ?? 'Erreur', 'error')
     loading.value = null
@@ -624,7 +850,7 @@ async function openSetupList() {
     if (!produitIds.length) {
       gammesByProduit.value = {}
       setupState.value      = {}
-      step.value = 'setup_list'
+      if (!setupFromDetail.value) step.value = 'setup_list'
       return
     }
 
@@ -700,7 +926,8 @@ async function openSetupList() {
       const consoQty = {}
       for (const g of gammes) {
         for (const item of g.consoItems) {
-          consoQty[item.id] = existingConsoQty[item.id] ?? item.quantite_defaut ?? 1
+          const csId = item.consommable_id?.id
+          if (csId) consoQty[csId] = existingConsoQty[csId] ?? item.quantite_defaut ?? 1
         }
       }
       const materielIds = existingMaterielIds.filter(id =>
@@ -714,11 +941,35 @@ async function openSetupList() {
     }
     setupState.value = newSetupState
 
-    step.value = 'setup_list'
+    if (!setupFromDetail.value) step.value = 'setup_list'
   } catch (err) {
     showToast(err?.message ?? 'Erreur chargement', 'error')
   } finally {
     loading.value = null
+  }
+}
+
+const setupFromDetail          = ref(false)
+const postArticleSelectProduit = ref(null)
+
+async function openSetupForProduct(produitId) {
+  postArticleSelectProduit.value = produitId
+  // Pre-populate article selection from already-linked articles
+  const presel = {}
+  for (const p of produits.value) {
+    const pid = p.produits_id?.id
+    if (!pid) continue
+    const existing = linkedArticles.value.find(la => la.article?.produit_id?.id === pid && la.article?.type !== 'secondaire')
+    if (existing?.article?.id) presel[pid] = existing.article.id
+  }
+  selectedArticleIds.value = presel
+  step.value = 'article_select'
+  articleLoading.value = true
+  try {
+    const ids = produits.value.map(p => p.produits_id?.id).filter(Boolean)
+    articles.value = ids.length ? await getArticlesByProduit(ids) : []
+  } finally {
+    articleLoading.value = false
   }
 }
 
@@ -728,11 +979,16 @@ function goToSetupArticle(produitId) {
   step.value = 'setup_article'
 }
 
-function saveSetupArticle() {
+async function saveSetupArticle() {
   if (currentSetupProduitId.value) {
     setupState.value[currentSetupProduitId.value].configured = true
   }
-  step.value = 'setup_list'
+  if (setupFromDetail.value) {
+    setupFromDetail.value = false
+    await confirmConsommables()
+  } else {
+    step.value = 'setup_list'
+  }
 }
 
 function toggleMaterielForSetup(artId, checked) {
@@ -749,8 +1005,12 @@ async function confirmConsommables() {
     for (const row of reservationConso.value) {
       const cid = row.consommable_id?.id ?? row.consommable_id
       if (cid && row.quantite) {
-        const item = allConsoItemsFlat.value.find(c => c.id === cid)
-        if (item) { await patchConsommable(cid, { stock: (item.stock ?? 0) + row.quantite }).catch(() => {}); item.stock = (item.stock ?? 0) + row.quantite }
+        const item = allConsoItemsFlat.value.find(c => c.consommable_id?.id === cid)
+        if (item?.consommable_id) {
+          const restoredStock = (item.consommable_id.stock ?? 0) + row.quantite
+          await patchConsommable(cid, { stock: restoredStock }).catch(() => {})
+          item.consommable_id.stock = restoredStock
+        }
       }
       await deleteReservationConsommable(row.id).catch(() => {})
     }
@@ -781,8 +1041,12 @@ async function confirmConsommables() {
       const cid = Number(cidStr); const q = Number(qty)
       if (!cid || !q || q <= 0) continue
       await createReservationConsommable({ reservations_id: props.reservation.id, consommable_id: cid, quantite: q })
-      const item = allConsoItemsFlat.value.find(c => c.id === cid)
-      if (item) { const newStock = Math.max(0, (item.stock ?? 0) - q); await patchConsommable(cid, { stock: newStock }).catch(() => {}); item.stock = newStock }
+      const item = allConsoItemsFlat.value.find(c => c.consommable_id?.id === cid)
+      if (item?.consommable_id) {
+        const newStock = Math.max(0, (item.consommable_id.stock ?? 0) - q)
+        await patchConsommable(cid, { stock: newStock }).catch(() => {})
+        item.consommable_id.stock = newStock
+      }
     }
 
     // 5. Persister nouveaux articles dans gamme_articles_materiel
@@ -818,11 +1082,8 @@ async function confirmConsommables() {
   }
 }
 
-async function finalizeDevisRealise() {
-  await store.updateStatus(props.reservation.id, 'devis_realise')
-  patchReservation(props.reservation.id, { devis_realise_par: auth.user.name }).catch(() => {})
+function finalizeDevisRealise() {
   step.value = 'detail'
-  showToast('Devis préparé', 'success')
 }
 
 // ── Articles libres filtrés ───────────────────────────────────────────────────
@@ -889,14 +1150,14 @@ function showToast(msg, type) {
 }
 
 const ETAT_LABEL = { disponible: 'Disponible', loue: 'Loué', en_location: 'En location', en_maintenance: 'Maintenance', hors_service: 'Hors service' }
-const ETAT_CLS   = { disponible: 'bg-emerald-100 text-emerald-700', loue: 'bg-blue-100 text-blue-700', en_location: 'bg-blue-100 text-blue-700', en_maintenance: 'bg-amber-100 text-amber-700', hors_service: 'bg-red-100 text-red-700' }
+const ETAT_CLS   = { disponible: 'bg-blue-100 text-blue-700', loue: 'bg-blue-100 text-blue-700', en_location: 'bg-blue-100 text-blue-700', en_maintenance: 'bg-amber-100 text-amber-700', hors_service: 'bg-red-100 text-red-700' }
 
 const STATUS_ORDER = ['en_attente', 'devis_realise', 'devis_confirme', 'terminee']
 const statusIdx = computed(() => STATUS_ORDER.indexOf(props.reservation?.status ?? ''))
 
 const validationSteps = computed(() =>
   [
-    validatedBy.value.devis_realise_par  && { label: 'Devis réalisé par', value: validatedBy.value.devis_realise_par },
+    validatedBy.value.devis_realise_par  && { label: 'Devis envoyé par',  value: validatedBy.value.devis_realise_par },
     validatedBy.value.devis_confirme_par && { label: 'Confirmé par',      value: validatedBy.value.devis_confirme_par },
     validatedBy.value.terminee_par       && { label: 'Terminé par',       value: validatedBy.value.terminee_par },
   ].filter(Boolean)
@@ -908,9 +1169,12 @@ const showConfirmedBackWarning = ref(false)
 
 function handleBack() {
   if (step.value === 'article_preview') { step.value = 'article_select'; return }
-  if (step.value === 'article_select')  { step.value = 'detail'; return }
-  if (step.value === 'setup_article')   { step.value = 'setup_list'; return }
-  if (step.value === 'setup_list')      { showBackWarning.value = true; return }
+  if (step.value === 'article_select')  { postArticleSelectProduit.value = null; step.value = 'detail'; return }
+  if (step.value === 'setup_article') {
+    if (setupFromDetail.value) { setupFromDetail.value = false; step.value = 'detail'; return }
+    step.value = 'setup_list'; return
+  }
+  if (step.value === 'setup_list') { showBackWarning.value = true; return }
 }
 
 function confirmBack() {
@@ -940,7 +1204,7 @@ async function confirmStepBack() {
 <template>
   <Teleport to="body">
     <div v-if="reservation" class="modal modal-open">
-      <div class="modal-box w-11/12 max-w-2xl p-0 overflow-hidden flex flex-col" style="max-height: 90vh;">
+      <div class="modal-box w-11/12 max-w-5xl p-0 overflow-hidden flex flex-col" style="max-height: 92vh;">
 
         <!-- ── Warning retour config devis ────────────────────────────── -->
         <div v-if="showBackWarning" class="absolute inset-0 z-40 flex items-center justify-center bg-base-100/80 backdrop-blur-sm rounded-2xl">
@@ -959,8 +1223,8 @@ async function confirmStepBack() {
         <div v-if="showConfirmedBackWarning" class="absolute inset-0 z-40 flex items-center justify-center bg-base-100/80 backdrop-blur-sm rounded-2xl">
           <div class="bg-base-100 border border-base-300 rounded-2xl shadow-xl p-6 mx-6 text-center space-y-4">
             <p class="text-2xl">⚠️</p>
-            <p class="font-bold text-base">Revenir au statut "Devis réalisé" ?</p>
-            <p class="text-sm text-base-content/60">La réservation ne sera plus confirmée. Cette action est réversible.</p>
+            <p class="font-bold text-base">Revenir à "Devis envoyé" ?</p>
+            <p class="text-sm text-base-content/60">Le devis signé sera conservé. Cette action est réversible.</p>
             <div class="flex gap-3 justify-center pt-1">
               <button class="btn btn-sm btn-ghost" @click="showConfirmedBackWarning = false">Annuler</button>
               <button class="btn btn-sm btn-warning btn-outline" :disabled="loading === 'step_back'" @click="confirmStepBack">
@@ -1029,7 +1293,7 @@ async function confirmStepBack() {
               </div>
               <span class="text-[10px] font-medium text-center leading-tight mt-1 w-16"
                 :class="statusIdx === 1 ? 'text-primary font-semibold' : statusIdx > 1 ? 'text-primary/60' : 'text-base-content/30'">
-                Devis réalisé
+                Devis envoyé
               </span>
               <span v-if="validatedBy.devis_realise_par" class="text-[9px] text-base-content/35 mt-0.5 text-center leading-tight w-16 truncate">
                 {{ validatedBy.devis_realise_par }}
@@ -1044,7 +1308,7 @@ async function confirmStepBack() {
                   ? 'bg-primary/10 border-primary/40 text-primary/90'
                   : statusIdx > 1 ? 'bg-base-200 border-base-300 text-base-content/40'
                   : 'bg-base-200 border-base-300 text-base-content/20'">
-                Att. de signature
+                Signature
               </span>
             </div>
 
@@ -1061,7 +1325,7 @@ async function confirmStepBack() {
               </div>
               <span class="text-[10px] font-medium text-center leading-tight mt-1 w-14"
                 :class="statusIdx === 2 ? 'text-primary font-semibold' : statusIdx > 2 ? 'text-primary/60' : 'text-base-content/30'">
-                Confirmé
+                Devis signé
               </span>
               <span v-if="validatedBy.devis_confirme_par" class="text-[9px] text-base-content/35 mt-0.5 text-center leading-tight w-14 truncate">
                 {{ validatedBy.devis_confirme_par }}
@@ -1108,32 +1372,19 @@ async function confirmStepBack() {
 
           <!-- ── Détail ──────────────────────────────────────────────────── -->
           <template v-if="step === 'detail'">
+          <div class="space-y-4">
 
-            <!-- ── Dates ────────────────────────────────────────────────── -->
-            <div class="rounded-xl border border-base-200 bg-base-100 mb-3 overflow-hidden">
-              <div class="flex items-center divide-x divide-base-200">
-                <div class="flex-1 px-4 py-3">
-                  <p class="text-[10px] font-semibold text-base-content/40 uppercase mb-0.5">Début</p>
-                  <p class="text-sm font-semibold capitalize">{{ fmtDate(reservation.date_start) }}</p>
-                </div>
-                <div class="flex items-center justify-center w-8 shrink-0">
-                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="w-3 h-3 text-base-content/20">
-                    <path fill-rule="evenodd" d="M2 8a.75.75 0 0 1 .75-.75h8.69L8.22 4.03a.75.75 0 0 1 1.06-1.06l4.5 4.5a.75.75 0 0 1 0 1.06l-4.5 4.5a.75.75 0 0 1-1.06-1.06l3.22-3.22H2.75A.75.75 0 0 1 2 8Z" clip-rule="evenodd"/>
-                  </svg>
-                </div>
-                <div class="flex-1 px-4 py-3">
-                  <p class="text-[10px] font-semibold text-base-content/40 uppercase mb-0.5">Fin</p>
-                  <p class="text-sm font-semibold capitalize">{{ fmtDate(reservation.date_end) }}</p>
-                </div>
+            <!-- ── Client + Dates ─────────────────────────────────────── -->
+            <div class="grid grid-cols-2 gap-4 items-start">
+            <!-- ── Client ───────────────────────────────────────────────── -->
+            <div v-if="client" class="rounded-xl border border-blue-100 bg-base-100 overflow-hidden shadow-sm">
+              <div class="px-4 py-2.5 border-b border-blue-100 bg-blue-50 flex items-center gap-2">
+                <div class="w-0.5 h-3.5 bg-blue-400 rounded-full shrink-0"></div>
+                <span class="text-xs font-semibold text-gray-500 uppercase tracking-wide">Client</span>
               </div>
-            </div>
-
-            <!-- ── Client (lookup card, style CRM) ─────────────────────── -->
-            <hr v-if="client" class="border-t border-base-200 mb-4">
-            <div v-if="client" class="bg-white rounded-xl shadow-sm border border-gray-100 mb-3 overflow-hidden">
               <div class="px-4 py-3 border-b border-gray-100 flex items-center gap-3">
                 <div class="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0"
-                  :class="client.typeClient === 'entreprise' ? 'bg-emerald-100 text-emerald-700' : 'bg-emerald-100 text-emerald-700'">
+                  :class="client.typeClient === 'entreprise' ? 'bg-blue-100 text-blue-700' : 'bg-blue-100 text-blue-700'">
                   {{ clientInitials }}
                 </div>
                 <div class="flex-1 min-w-0">
@@ -1165,10 +1416,60 @@ async function confirmStepBack() {
               </div>
             </div>
 
+            <!-- ── Période ───────────────────────────────────────────────── -->
+            <div class="rounded-xl border border-blue-100 bg-base-100 overflow-hidden shadow-sm">
+              <div class="px-4 py-2.5 border-b border-blue-100 bg-blue-50 flex items-center gap-2">
+                <div class="w-0.5 h-3.5 bg-blue-400 rounded-full shrink-0"></div>
+                <span class="text-xs font-semibold text-gray-500 uppercase tracking-wide">Période</span>
+              </div>
+              <div class="flex items-stretch divide-x divide-blue-100">
+                <div class="flex-1 px-4 py-3">
+                  <p class="text-[10px] font-semibold text-base-content/40 uppercase mb-0.5">Début</p>
+                  <p class="text-sm font-semibold capitalize">{{ fmtDate(reservation.date_start) }}</p>
+                  <p v-if="fmtTime(reservation.date_start)" class="text-xs text-blue-500 font-semibold mt-0.5">{{ fmtTime(reservation.date_start) }}</p>
+                </div>
+                <div class="flex items-center justify-center w-8 shrink-0">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="w-3 h-3 text-base-content/20">
+                    <path fill-rule="evenodd" d="M2 8a.75.75 0 0 1 .75-.75h8.69L8.22 4.03a.75.75 0 0 1 1.06-1.06l4.5 4.5a.75.75 0 0 1 0 1.06l-4.5 4.5a.75.75 0 0 1-1.06-1.06l3.22-3.22H2.75A.75.75 0 0 1 2 8Z" clip-rule="evenodd"/>
+                  </svg>
+                </div>
+                <div class="flex-1 px-4 py-3">
+                  <p class="text-[10px] font-semibold text-base-content/40 uppercase mb-0.5">Fin</p>
+                  <p class="text-sm font-semibold capitalize">{{ fmtDate(reservation.date_end) }}</p>
+                  <p v-if="fmtTime(reservation.date_end)" class="text-xs text-blue-500 font-semibold mt-0.5">{{ fmtTime(reservation.date_end) }}</p>
+                </div>
+              </div>
+            </div>
+
+            </div><!-- end grid client+dates -->
+
             <!-- ── Produits + Articles ───────────────────────────────────── -->
-            <div v-if="produits.length" class="mb-3">
-              <hr class="border-t border-base-200 mb-4">
-              <p class="text-[11px] font-bold text-base-content/40 uppercase tracking-wide mb-2">Produits réservés</p>
+            <div v-if="produits.length || reservation.status === 'en_attente' || reservation.status === 'devis_realise'" class="rounded-xl border border-blue-100 bg-base-100 overflow-hidden shadow-sm">
+              <div class="px-4 py-2.5 border-b border-blue-100 bg-blue-50 flex items-center gap-2">
+                <div class="w-0.5 h-3.5 bg-blue-400 rounded-full shrink-0"></div>
+                <span class="text-xs font-semibold text-gray-500 uppercase tracking-wide">Produits réservés</span>
+                <button v-if="reservation.status === 'en_attente' || reservation.status === 'devis_realise'"
+                  class="btn btn-xs btn-ghost ml-auto gap-1 text-base-content/50"
+                  @click="openArticleSelect()">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="w-3 h-3">
+                    <path d="M8.75 3.75a.75.75 0 0 0-1.5 0v3.5h-3.5a.75.75 0 0 0 0 1.5h3.5v3.5a.75.75 0 0 0 1.5 0v-3.5h3.5a.75.75 0 0 0 0-1.5h-3.5v-3.5Z"/>
+                  </svg>
+                  Modifier
+                </button>
+              </div>
+              <div class="p-3 space-y-0">
+              <div v-if="!produits.length && (reservation.status === 'en_attente' || reservation.status === 'devis_realise')"
+                class="flex flex-col items-center gap-2 py-6 text-center">
+                <div class="w-10 h-10 rounded-xl bg-base-200 flex items-center justify-center">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="w-5 h-5 text-base-content/30">
+                    <path d="M8.75 3.75a.75.75 0 0 0-1.5 0v3.5h-3.5a.75.75 0 0 0 0 1.5h3.5v3.5a.75.75 0 0 0 1.5 0v-3.5h3.5a.75.75 0 0 0 0-1.5h-3.5v-3.5Z"/>
+                  </svg>
+                </div>
+                <p class="text-sm text-base-content/40">Aucun article sélectionné</p>
+                <button class="btn btn-sm btn-primary mt-1" @click="openArticleSelect()">
+                  Sélectionner les articles
+                </button>
+              </div>
               <div v-if="articlesError" class="alert alert-warning text-xs py-2 mb-2">
                 <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 shrink-0" viewBox="0 0 20 20" fill="currentColor">
                   <path fill-rule="evenodd" d="M8.485 2.495c.673-1.167 2.357-1.167 3.03 0l6.28 10.875c.673 1.167-.17 2.625-1.516 2.625H3.72c-1.347 0-2.189-1.458-1.515-2.625L8.485 2.495ZM10 5a.75.75 0 0 1 .75.75v3.5a.75.75 0 0 1-1.5 0v-3.5A.75.75 0 0 1 10 5Zm0 9a1 1 0 1 0 0-2 1 1 0 0 0 0 2Z" clip-rule="evenodd"/>
@@ -1179,7 +1480,10 @@ async function confirmStepBack() {
                 <div v-for="item in produits" :key="item.produits_id?.id"
                   class="rounded-xl border border-base-200 overflow-hidden">
                   <div class="flex items-center gap-3 bg-base-200/60 px-3 py-2.5">
-                    <img v-if="item.produits_id?.images_urls?.[0]" :src="item.produits_id.images_urls[0]" class="w-9 h-9 object-cover rounded-lg shrink-0" alt="" />
+                    <img
+                      v-if="item.produits_id?.image || item.produits_id?.images_urls?.[0]"
+                      :src="item.produits_id.image ? assetUrl(item.produits_id.image) : item.produits_id.images_urls[0]"
+                      class="w-9 h-9 object-cover rounded-lg shrink-0" alt="" />
                     <div v-else class="w-9 h-9 bg-base-300 rounded-lg flex items-center justify-center shrink-0 text-base-content/30 text-xs font-bold">?</div>
                     <div class="flex-1 min-w-0">
                       <p class="font-semibold text-sm truncate">{{ item.produits_id?.name || 'Produit' }}</p>
@@ -1187,44 +1491,53 @@ async function confirmStepBack() {
                         Qté {{ item.quantity || 1 }}<span v-if="item.unit_price"> · {{ item.unit_price }} €</span>
                       </p>
                     </div>
-                    <div v-if="reservation.status !== 'en_attente'" class="shrink-0">
+                    <div class="shrink-0 flex items-center gap-2">
                       <span v-if="productArticleGroups[item.produits_id?.id]?.principal?.length"
                         class="w-5 h-5 rounded-full bg-success/15 flex items-center justify-center">
                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="w-3 h-3 text-success">
                           <path fill-rule="evenodd" d="M12.416 3.376a.75.75 0 0 1 .208 1.04l-5 7.5a.75.75 0 0 1-1.154.114l-3-3a.75.75 0 0 1 1.06-1.06l2.353 2.353 4.493-6.74a.75.75 0 0 1 1.04-.207Z" clip-rule="evenodd"/>
                         </svg>
                       </span>
-                      <span v-else class="w-5 h-5 rounded-full bg-base-300 flex items-center justify-center">
-                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="w-3 h-3 text-base-content/30">
-                          <path d="M8.75 3.75a.75.75 0 0 0-1.5 0v3.5h-3.5a.75.75 0 0 0 0 1.5h3.5v3.5a.75.75 0 0 0 1.5 0v-3.5h3.5a.75.75 0 0 0 0-1.5h-3.5v-3.5Z"/>
-                        </svg>
-                      </span>
+                      <span v-else class="w-5 h-5 rounded-full bg-warning/20 flex items-center justify-center text-warning text-xs font-bold">!</span>
+                      <button v-if="reservation.status === 'en_attente' || reservation.status === 'devis_realise'"
+                        class="btn btn-xs"
+                        :class="productArticleGroups[item.produits_id?.id]?.principal?.length ? 'btn-ghost text-base-content/50' : 'btn-warning btn-outline'"
+                        :disabled="loading === 'load_setup'"
+                        @click="openSetupForProduct(item.produits_id?.id)">
+                        {{ productArticleGroups[item.produits_id?.id]?.principal?.length ? 'Modifier' : 'Configurer' }}
+                      </button>
                     </div>
                   </div>
 
-                  <template v-if="reservation.status !== 'en_attente'">
+                  <template>
                     <div v-for="(la, i) in productArticleGroups[item.produits_id?.id]?.principal ?? []"
                       :key="`p-${i}`"
-                      class="flex border-t border-emerald-100 bg-emerald-50/30">
+                      class="flex border-t border-blue-100 bg-blue-50/30">
                       <!-- Tree connector -->
                       <div class="w-9 flex-shrink-0 flex flex-col items-center">
-                        <div class="w-px flex-1 bg-emerald-200/60"></div>
+                        <div class="w-px flex-1 bg-blue-200/60"></div>
                         <div class="flex items-center w-full">
-                          <div class="flex-1 h-px bg-emerald-200/60"></div>
+                          <div class="flex-1 h-px bg-blue-200/60"></div>
                         </div>
                         <div class="flex-1"></div>
                       </div>
                       <!-- Content -->
                       <div class="flex items-center gap-3 py-2.5 pr-3 flex-1 min-w-0">
-                        <div class="w-7 h-7 rounded-lg bg-emerald-100 flex items-center justify-center shrink-0">
-                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="w-3.5 h-3.5 text-emerald-500">
-                            <path d="M3.75 2a.75.75 0 0 0-.75.75v10.5c0 .414.336.75.75.75h8.5a.75.75 0 0 0 .75-.75V6.56a.75.75 0 0 0-.22-.53L9.22 2.22A.75.75 0 0 0 8.69 2H3.75Z"/>
-                          </svg>
+                        <div class="w-7 h-7 rounded-lg overflow-hidden shrink-0 bg-blue-100">
+                          <img v-if="item.produits_id?.image || item.produits_id?.images_urls?.[0]"
+                            :src="item.produits_id.image ? assetUrl(item.produits_id.image) : item.produits_id.images_urls[0]"
+                            class="w-full h-full object-cover" alt="" />
+                          <div v-else class="w-full h-full flex items-center justify-center">
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="w-3.5 h-3.5 text-blue-400">
+                              <path d="M3.75 2a.75.75 0 0 0-.75.75v10.5c0 .414.336.75.75.75h8.5a.75.75 0 0 0 .75-.75V6.56a.75.75 0 0 0-.22-.53L9.22 2.22A.75.75 0 0 0 8.69 2H3.75Z"/>
+                            </svg>
+                          </div>
                         </div>
                         <div class="flex-1 min-w-0">
-                          <p class="font-mono font-bold text-sm text-emerald-900">{{ la.article?.reference ?? '—' }}</p>
+                          <p class="font-semibold text-sm text-blue-900">{{ la.article?.name || la.article?.produit_id?.name || la.article?.reference }}</p>
                           <div class="flex gap-1.5 mt-0.5 flex-wrap items-center">
-                            <span v-if="la.article?.entrepot_id?.nom" class="text-xs text-base-content/50">{{ la.article.entrepot_id.nom }}</span>
+                            <span class="font-mono text-[10px] text-base-content/40">{{ la.article?.reference }}</span>
+                            <span v-if="la.article?.entrepot_id?.nom" class="text-xs text-base-content/50">· {{ la.article.entrepot_id.nom }}</span>
                             <span v-if="la.article?.entrepot_id?.nom && la.article?.notes" class="text-xs text-base-content/30">·</span>
                             <span v-if="la.article?.notes" class="text-xs text-base-content/55 truncate">{{ la.article.notes }}</span>
                           </div>
@@ -1248,7 +1561,8 @@ async function confirmStepBack() {
                           :key="`s-${i}`"
                           class="flex items-center gap-2 py-2">
                           <div class="flex-1 min-w-0">
-                            <span class="font-mono text-xs font-semibold text-base-content/70">{{ la.article?.reference ?? '—' }}</span>
+                            <span class="text-xs font-semibold text-base-content/70">{{ la.article?.name || la.article?.reference }}</span>
+                            <span class="font-mono text-[10px] text-base-content/30 ml-1.5">{{ la.article?.reference }}</span>
                             <p v-if="la.article?.notes" class="text-xs text-base-content/30 truncate mt-0.5">{{ la.article.notes }}</p>
                           </div>
                           <span class="text-xs text-base-content/30 shrink-0">{{ la.article?.entrepot_id?.nom }}</span>
@@ -1271,67 +1585,137 @@ async function confirmStepBack() {
                   </template>
                 </div>
               </div>
+              </div>
             </div>
 
             <!-- ── Notes ────────────────────────────────────────────────── -->
-            <div v-if="reservation.notes" class="mb-3">
-              <hr class="border-t border-base-200 mb-4">
-              <p class="text-[11px] font-bold text-base-content/40 uppercase tracking-wide mb-1.5">Notes</p>
-              <p class="text-sm bg-base-200/60 border border-base-200 rounded-xl px-4 py-3 text-base-content/70 leading-relaxed">{{ reservation.notes }}</p>
+            <div v-if="reservation.notes" class="rounded-xl border border-blue-100 bg-base-100 overflow-hidden shadow-sm">
+              <div class="px-4 py-2.5 border-b border-blue-100 bg-blue-50 flex items-center gap-2">
+                <div class="w-0.5 h-3.5 bg-blue-400 rounded-full shrink-0"></div>
+                <span class="text-xs font-semibold text-gray-500 uppercase tracking-wide">Notes</span>
+              </div>
+              <p class="text-sm px-4 py-3 text-base-content/70 leading-relaxed">{{ reservation.notes }}</p>
             </div>
 
-            <!-- ── Setup ──────────────────────────────────────────────────── -->
-            <div v-if="reservation.status !== 'en_attente'" class="mb-3">
-              <hr class="border-t border-base-200 mb-4">
-              <p class="text-[11px] font-bold text-base-content/40 uppercase tracking-wide mb-2">Setup</p>
-              <div class="rounded-xl border border-base-200 bg-base-100 overflow-hidden">
-                <!-- Livraison / Installation -->
-                <div class="flex items-center divide-x divide-base-200">
-                  <label class="flex-1 flex items-center justify-between px-4 py-2.5 cursor-pointer">
-                    <div class="flex items-center gap-2">
-                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="w-3.5 h-3.5 text-base-content/30 shrink-0">
-                        <path d="M8.5 3.5A1.5 1.5 0 0 1 10 2h1.5A1.5 1.5 0 0 1 13 3.5V5h1a.75.75 0 0 1 .649.373l1.25 2.25a.75.75 0 0 1 .101.374V10a.75.75 0 0 1-.75.75h-.5a2.25 2.25 0 0 1-4.5 0h-2.5a2.25 2.25 0 0 1-4.5 0H2.25A.75.75 0 0 1 1.5 10V3.5A1.5 1.5 0 0 1 3 2h5a.5.5 0 0 1 0 1H3a.5.5 0 0 0-.5.5v6.213a2.251 2.251 0 0 1 3.36.787H9.14a2.252 2.252 0 0 1 3.712-.506V5h-1.5A1.5 1.5 0 0 1 9.5 3.5v-1h-1v1Z"/>
-                      </svg>
-                      <span class="text-sm font-medium">Livraison</span>
+            <!-- ── Livraison + Remise ────────────────────────────────────── -->
+            <div class="grid grid-cols-2 gap-4 items-start">
+            <div class="rounded-xl border border-blue-100 bg-base-100 overflow-hidden shadow-sm">
+              <div class="px-4 py-2.5 border-b border-blue-100 bg-blue-50 flex items-center gap-2">
+                <div class="w-0.5 h-3.5 bg-blue-400 rounded-full shrink-0"></div>
+                <span class="text-xs font-semibold text-gray-500 uppercase tracking-wide">Livraison & Installation</span>
+              </div>
+                <!-- Livraison + Installation (liées) -->
+                <label class="flex items-center justify-between px-4 py-2.5 cursor-pointer">
+                  <div class="flex items-center gap-2">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="w-3.5 h-3.5 text-base-content/30 shrink-0">
+                      <path d="M8.5 3.5A1.5 1.5 0 0 1 10 2h1.5A1.5 1.5 0 0 1 13 3.5V5h1a.75.75 0 0 1 .649.373l1.25 2.25a.75.75 0 0 1 .101.374V10a.75.75 0 0 1-.75.75h-.5a2.25 2.25 0 0 1-4.5 0h-2.5a2.25 2.25 0 0 1-4.5 0H2.25A.75.75 0 0 1 1.5 10V3.5A1.5 1.5 0 0 1 3 2h5a.5.5 0 0 1 0 1H3a.5.5 0 0 0-.5.5v6.213a2.251 2.251 0 0 1 3.36.787H9.14a2.252 2.252 0 0 1 3.712-.506V5h-1.5A1.5 1.5 0 0 1 9.5 3.5v-1h-1v1Z"/>
+                    </svg>
+                    <span class="text-sm font-medium">Livraison & installation</span>
+                  </div>
+                  <input type="checkbox" class="toggle toggle-xs toggle-primary" :checked="livraison" :disabled="reservation.status === 'devis_confirme'" @change="toggleLivraison($event.target.checked)" />
+                </label>
+                <div v-if="livraison" class="px-4 py-2.5 border-t border-base-200 flex items-center gap-2">
+                  <span class="text-xs text-base-content/60 font-medium">Distance :</span>
+                  <input type="number" v-model.number="distanceKm" min="0" max="999" @change="saveDistance"
+                    :disabled="reservation.status === 'devis_confirme'"
+                    class="w-20 text-sm px-2 py-1 border border-base-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-primary text-center font-semibold bg-base-100" />
+                  <span class="text-xs text-base-content/60">km</span>
+                  <!-- Bouton barème livraison -->
+                  <div class="relative group">
+                    <button type="button"
+                      class="w-5 h-5 rounded-full bg-base-200 hover:bg-base-300 text-base-content/40 hover:text-base-content text-[10px] font-bold flex items-center justify-center transition-colors">
+                      ?
+                    </button>
+                    <div class="absolute bottom-full left-1/2 -translate-x-1/2 mb-2 hidden group-hover:block z-50 pointer-events-none">
+                      <div class="bg-base-100 border border-base-300 rounded-xl shadow-xl p-3 w-52 text-xs whitespace-nowrap">
+                        <p class="font-semibold text-base-content/70 mb-2 text-[11px] uppercase tracking-wide">Barème livraison</p>
+                        <table class="w-full">
+                          <tbody class="divide-y divide-base-200">
+                            <tr v-for="(row, i) in [
+                              ['0 – 15 km',    '20 €'],
+                              ['15 – 30 km',   '40 €'],
+                              ['30 – 50 km',   '65 €'],
+                              ['50 – 80 km',   '100 €'],
+                              ['80 – 120 km',  '150 €'],
+                              ['> 120 km',     '150 € + 1 €/km'],
+                            ]" :key="row[0]"
+                              :class="distanceKm > 0 && i === livraisonZoneIdx ? 'text-primary' : 'text-base-content/60'">
+                              <td class="py-0.5 pr-3">{{ row[0] }}</td>
+                              <td class="py-0.5 text-right font-semibold">{{ row[1] }}</td>
+                            </tr>
+                          </tbody>
+                        </table>
+                      </div>
+                      <!-- Flèche -->
+                      <div class="w-2 h-2 bg-base-100 border-r border-b border-base-300 rotate-45 mx-auto -mt-1"></div>
                     </div>
-                    <input type="checkbox" class="toggle toggle-xs toggle-primary" :checked="livraison" :disabled="reservation.status === 'devis_confirme'" @change="toggleLivraison($event.target.checked)" />
-                  </label>
-                  <label class="flex-1 flex items-center justify-between px-4 py-2.5"
-                    :class="livraison ? 'cursor-pointer' : 'opacity-30 cursor-not-allowed'">
-                    <div class="flex items-center gap-2">
-                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="w-3.5 h-3.5 text-base-content/30 shrink-0">
-                        <path fill-rule="evenodd" d="M7.455 1.52a.75.75 0 0 1 1.09 0l6.25 6.75a.75.75 0 0 1 0 1.018l-6.25 6.75a.75.75 0 0 1-1.09 0l-6.25-6.75a.75.75 0 0 1 0-1.017l6.25-6.75Zm1.818 2.395L13 8l-3.727 4.085V7.25a.25.25 0 0 0-.25-.25H7.25a.25.25 0 0 0-.25.25v4.835L3 8l4.273-4.085A1.75 1.75 0 0 1 9.273 3.915Z" clip-rule="evenodd"/>
-                      </svg>
-                      <span class="text-sm font-medium">Installation</span>
-                    </div>
-                    <input type="checkbox" class="toggle toggle-xs toggle-secondary" :checked="installation" :disabled="!livraison || reservation.status === 'devis_confirme'" @change="toggleInstallation($event.target.checked)" />
-                  </label>
+                  </div>
+                  <span class="ml-auto text-sm font-bold text-primary">{{ livraisonMontant }} €</span>
                 </div>
                 <div v-if="reservation.delivery_address && livraison" class="px-4 py-2.5 border-t border-base-200 bg-base-200/30">
                   <p class="text-[10px] font-semibold text-base-content/40 uppercase mb-0.5">Adresse de livraison</p>
                   <p class="text-sm text-base-content/70">{{ reservation.delivery_address }}</p>
                 </div>
-                <!-- Accord oral (devis_realise seulement) -->
-                <div v-if="reservation.status === 'devis_realise'" class="px-4 py-3 border-t border-base-200">
+                <div v-if="reservation.status === 'en_attente'" class="px-4 py-3 border-t border-base-200">
                   <label class="flex items-center gap-2 cursor-pointer select-none">
-                    <input type="checkbox" v-model="clientContacte" class="checkbox checkbox-sm checkbox-success" />
+                    <input type="checkbox" v-model="clientContacte" class="checkbox checkbox-sm checkbox-primary" />
                     <span class="text-sm" :class="clientContacte ? 'text-base-content' : 'text-base-content/60'">
                       Client contacté et accord oral confirmé
                     </span>
                   </label>
                 </div>
-              </div>
             </div>
 
+            <!-- ── Remise ──────────────────────────────────────────────────── -->
+            <div class="rounded-xl border border-blue-100 bg-base-100 overflow-hidden shadow-sm">
+              <div class="px-4 py-2.5 border-b border-blue-100 bg-blue-50 flex items-center gap-2">
+                <div class="w-0.5 h-3.5 bg-blue-400 rounded-full shrink-0"></div>
+                <span class="text-xs font-semibold text-gray-500 uppercase tracking-wide">Remise</span>
+                <span class="text-[10px] text-gray-400 font-normal normal-case tracking-normal">(optionnelle)</span>
+              </div>
+                <div class="flex items-center justify-between px-4 py-2.5">
+                  <span class="text-sm font-medium">Remise auto</span>
+                  <div class="flex items-center gap-2">
+                    <!-- Tooltip barème remise -->
+                    <div class="relative group">
+                      <button type="button"
+                        class="w-5 h-5 rounded-full bg-base-200 hover:bg-base-300 text-base-content/40 hover:text-base-content text-[10px] font-bold flex items-center justify-center transition-colors">
+                        ?
+                      </button>
+                      <div class="absolute bottom-full right-0 mb-2 hidden group-hover:block z-50 pointer-events-none">
+                        <div class="bg-base-100 border border-base-300 rounded-xl shadow-xl p-3 w-64 text-xs">
+                          <p class="font-semibold text-base-content/70 mb-2 text-[11px] uppercase tracking-wide">Règle de remise</p>
+                          <p class="text-base-content/60 mb-2">Frais de livraison & installation offerts, plafonnés à <span class="font-semibold text-base-content/80">50 €</span>.</p>
+                          <div v-if="livraison" class="mt-2 pt-2 border-t border-base-200 flex items-center justify-between">
+                            <span class="text-base-content/50">Remise appliquée</span>
+                            <span class="font-semibold text-primary">− {{ Math.min(livraisonMontant, 50).toFixed(2) }} €</span>
+                          </div>
+                          <p v-else class="text-base-content/40 italic mt-1">Activer la livraison d'abord</p>
+                        </div>
+                        <div class="w-2 h-2 bg-base-100 border-r border-b border-base-300 rotate-45 ml-auto mr-2 -mt-1"></div>
+                      </div>
+                    </div>
+                    <input type="checkbox" class="toggle toggle-xs toggle-primary" :checked="remise" :disabled="reservation.status === 'devis_confirme'" @change="toggleRemise($event.target.checked)" />
+                  </div>
+                </div>
+                <div v-if="remise" class="px-4 py-2.5 border-t border-base-200 flex items-center gap-2">
+                  <span class="text-sm text-base-content/60 italic">{{ remiseDescription }}</span>
+                  <span class="ml-auto text-sm font-bold text-red-500">− {{ remiseMontantTTC.toFixed(2) }} €</span>
+                </div>
+            </div>
+            </div><!-- end grid livraison+remise -->
+
             <!-- ── Consommables ──────────────────────────────────────────── -->
-            <div v-if="reservationConso.length && reservation.status !== 'en_attente'" class="mb-3">
-              <hr class="border-t border-base-200 mb-4">
-              <p class="text-[11px] font-bold text-base-content/40 uppercase tracking-wide mb-2">Consommables</p>
-              <div class="rounded-xl border border-emerald-100 overflow-hidden divide-y divide-emerald-50">
+            <div v-if="reservationConso.length" class="rounded-xl border border-blue-100 overflow-hidden shadow-sm">
+              <div class="px-4 py-2.5 border-b border-blue-100 bg-blue-50/50 flex items-center gap-2">
+                <div class="w-0.5 h-3.5 bg-blue-400 rounded-full shrink-0"></div>
+                <span class="text-xs font-semibold text-blue-600/70 uppercase tracking-wide">Consommables</span>
+              </div>
+              <div class="divide-y divide-blue-50">
                 <div v-for="row in reservationConso" :key="row.id"
-                  class="flex items-center gap-3 px-3 py-2.5 bg-emerald-50/30">
-                  <div class="w-7 h-7 rounded-lg bg-emerald-100 flex items-center justify-center shrink-0">
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="w-3.5 h-3.5 text-emerald-500">
+                  class="flex items-center gap-3 px-3 py-2.5 bg-blue-50/30">
+                  <div class="w-7 h-7 rounded-lg bg-blue-100 flex items-center justify-center shrink-0">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="w-3.5 h-3.5 text-blue-500">
                       <path fill-rule="evenodd" d="M8 2a.75.75 0 0 1 .75.75V7h4.25a.75.75 0 0 1 0 1.5H8.75v4.25a.75.75 0 0 1-1.5 0V8.5H3a.75.75 0 0 1 0-1.5h4.25V2.75A.75.75 0 0 1 8 2Z" clip-rule="evenodd"/>
                     </svg>
                   </div>
@@ -1340,120 +1724,147 @@ async function confirmStepBack() {
                     <p class="text-xs text-base-content/40">{{ row.consommable_id?.unite }}</p>
                   </div>
                   <span class="text-xs font-semibold text-base-content/50 shrink-0">× {{ row.quantite }}</span>
-                  <span v-if="row.consommable_id?.prix_unitaire != null" class="text-xs font-bold text-emerald-600 shrink-0">
+                  <span v-if="row.consommable_id?.prix_unitaire != null" class="text-xs font-bold text-blue-600 shrink-0">
                     {{ (row.consommable_id.prix_unitaire * row.quantite).toFixed(2) }} €
                   </span>
                 </div>
               </div>
             </div>
 
-            <!-- ── Devis généré ──────────────────────────────────────────── -->
-            <div v-if="reservation.status === 'devis_realise' || (devisGenereUrl && reservation.status !== 'en_attente')" class="mb-3">
-              <hr class="border-t border-base-200 mb-4">
-              <p class="text-[11px] font-bold text-base-content/40 uppercase tracking-wide mb-1.5">Devis</p>
-              <div class="rounded-xl border border-base-200 overflow-hidden">
-                <a v-if="devisGenereUrl" :href="devisGenereUrl" target="_blank" rel="noopener"
-                  class="flex items-center gap-4 px-4 py-4 hover:bg-base-200/40 transition-colors group border-b-2 border-base-200">
-                  <div class="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="w-5 h-5 text-primary">
-                      <path d="M2 3a1 1 0 0 1 1-1h7.586a1 1 0 0 1 .707.293l2.414 2.414A1 1 0 0 1 14 5.414V13a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V3Z"/>
-                    </svg>
+            <!-- ── Devis (2 colonnes) ────────────────────────────────────── -->
+            <div v-if="reservation.status !== 'annulee' && reservation.status !== 'terminee' || devisGenereUrl" class="rounded-xl border border-base-200 overflow-hidden shadow-sm">
+              <div class="px-4 py-2.5 border-b border-base-200 bg-blue-50 flex items-center gap-2">
+                <div class="w-0.5 h-3.5 bg-blue-400 rounded-full shrink-0"></div>
+                <span class="text-xs font-semibold text-gray-500 uppercase tracking-wide">Documents</span>
+              </div>
+              <div class="grid grid-cols-2 divide-x divide-base-200">
+                <!-- Gauche : Devis à signer -->
+                <div class="flex flex-col">
+                  <div class="px-3 py-2 bg-base-50 border-b border-base-200">
+                    <p class="text-xs font-semibold text-base-content/60">Devis à signer</p>
                   </div>
-                  <div class="flex-1 min-w-0">
-                    <p class="text-sm font-semibold text-primary group-hover:underline">Voir le devis</p>
-                    <p class="text-xs text-base-content/40">PDF</p>
+                  <a v-if="devisGenereUrl" :href="devisGenereUrl" target="_blank" rel="noopener"
+                    class="flex items-center gap-2 px-3 py-3 hover:bg-base-200/40 transition-colors group border-b border-base-200">
+                    <div class="w-8 h-8 rounded-lg bg-primary/10 flex items-center justify-center shrink-0">
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="w-4 h-4 text-primary">
+                        <path d="M2 3a1 1 0 0 1 1-1h7.586a1 1 0 0 1 .707.293l2.414 2.414A1 1 0 0 1 14 5.414V13a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V3Z"/>
+                      </svg>
+                    </div>
+                    <div class="flex-1 min-w-0">
+                      <p class="text-sm font-semibold text-primary group-hover:underline truncate">Voir le devis</p>
+                      <p class="text-xs text-base-content/40">PDF</p>
+                    </div>
+                  </a>
+                  <div v-else class="flex items-center justify-center px-3 py-5 text-xs text-base-content/30">Non généré</div>
+                  <div v-if="reservation.status === 'en_attente' || reservation.status === 'devis_realise'" class="px-3 py-2.5">
+                    <button class="btn btn-xs gap-1 w-full" :class="devisGenereUrl ? 'btn-ghost' : 'btn-primary'"
+                      :disabled="loading === 'generate_devis'" @click="generateDevis">
+                      <span v-if="loading !== 'generate_devis'">{{ devisGenereUrl ? 'Regénérer' : 'Générer le devis' }}</span>
+                      <span v-else class="loading loading-spinner loading-xs"></span>
+                    </button>
                   </div>
-                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="w-4 h-4 text-base-content/20 shrink-0">
-                    <path d="M6.22 8.72a.75.75 0 0 0 1.06 1.06l5.22-5.22v1.69a.75.75 0 0 0 1.5 0v-3.5a.75.75 0 0 0-.75-.75h-3.5a.75.75 0 0 0 0 1.5h1.69L6.22 8.72ZM3.5 6.75c0-.69.56-1.25 1.25-1.25H7A.75.75 0 0 0 7 4H4.75A2.75 2.75 0 0 0 2 6.75v4.5A2.75 2.75 0 0 0 4.75 14h4.5A2.75 2.75 0 0 0 12 11.25V9a.75.75 0 0 0-1.5 0v2.25c0 .69-.56 1.25-1.25 1.25h-4.5c-.69 0-1.25-.56-1.25-1.25v-4.5Z"/>
-                  </svg>
-                </a>
-                <div class="flex items-center gap-2 px-4 py-3.5 bg-base-50">
-                  <button class="btn btn-sm gap-1.5" :class="devisGenereUrl ? 'btn-ghost' : 'btn-primary'"
-                    :disabled="loading === 'generate_devis'" @click="generateDevis">
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="w-3.5 h-3.5">
+                </div>
+                <!-- Droite : Devis signé -->
+                <div class="flex flex-col">
+                  <div class="px-3 py-2 bg-base-50 border-b border-base-200 flex items-center gap-1.5">
+                    <p class="text-xs font-semibold text-base-content/60">Devis signé</p>
+                    <span v-if="reservation.status === 'devis_realise'"
+                      class="text-[9px] font-bold text-orange-500 uppercase">{{ signedDevisUrl ? '' : 'Requis' }}</span>
+                    <svg v-if="signedDevisUrl" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="w-3 h-3 text-success">
                       <path fill-rule="evenodd" d="M12.416 3.376a.75.75 0 0 1 .208 1.04l-5 7.5a.75.75 0 0 1-1.154.114l-3-3a.75.75 0 0 1 1.06-1.06l2.353 2.353 4.493-6.74a.75.75 0 0 1 1.04-.207Z" clip-rule="evenodd"/>
                     </svg>
-                    <span v-if="loading !== 'generate_devis'">{{ devisGenereUrl ? 'Regénérer' : 'Générer le devis' }}</span>
-                    <span v-else class="loading loading-spinner loading-xs"></span>
-                  </button>
+                  </div>
+                  <a v-if="signedDevisUrl" :href="signedDevisUrl" target="_blank" rel="noopener"
+                    class="flex items-center gap-2 px-3 py-3 hover:bg-base-200/40 transition-colors group border-b border-base-200">
+                    <div class="w-8 h-8 rounded-lg bg-success/10 flex items-center justify-center shrink-0">
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="w-4 h-4 text-success">
+                        <path fill-rule="evenodd" d="M12.416 3.376a.75.75 0 0 1 .208 1.04l-5 7.5a.75.75 0 0 1-1.154.114l-3-3a.75.75 0 0 1 1.06-1.06l2.353 2.353 4.493-6.74a.75.75 0 0 1 1.04-.207Z" clip-rule="evenodd"/>
+                      </svg>
+                    </div>
+                    <div class="flex-1 min-w-0">
+                      <p class="text-sm font-semibold text-success group-hover:underline truncate">Voir signé</p>
+                      <p class="text-xs text-base-content/40">PDF signé</p>
+                    </div>
+                  </a>
+                  <div v-else class="flex items-center justify-center px-3 py-5 text-xs text-base-content/30">En attente</div>
+                  <div v-if="reservation.status === 'devis_realise' || reservation.status === 'devis_confirme'" class="px-3 py-2.5">
+                    <input ref="devisSigneInput" type="file" accept=".pdf,.jpg,.jpeg,.png" class="hidden" @change="onDevisSigneChange" />
+                    <button class="btn btn-xs gap-1 w-full" :class="signedDevisUrl ? 'btn-ghost' : 'btn-outline btn-warning'"
+                      @click="devisSigneInput.click()">
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="w-3 h-3">
+                        <path d="M8.75 3.75a.75.75 0 0 0-1.5 0v3.5h-3.5a.75.75 0 0 0 0 1.5h3.5v3.5a.75.75 0 0 0 1.5 0v-3.5h3.5a.75.75 0 0 0 0-1.5h-3.5v-3.5Z"/>
+                      </svg>
+                      {{ signedDevisUrl ? 'Remplacer' : 'Ajouter' }}
+                    </button>
+                    <div v-if="devisSigneFile" class="flex items-center gap-1.5 mt-1.5">
+                      <span class="text-xs text-success truncate flex-1">{{ devisSigneFile.name }}</span>
+                      <button class="btn btn-xs btn-success" :disabled="loading === 'upload_devis_signe'" @click="uploadDevisSigne">
+                        <span v-if="loading !== 'upload_devis_signe'">OK</span>
+                        <span v-else class="loading loading-spinner loading-xs"></span>
+                      </button>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
 
-            <!-- ── Devis signé ───────────────────────────────────────────── -->
-            <div v-if="reservation.status === 'devis_confirme'" class="mb-3">
-              <hr class="border-t border-base-200 mb-4">
-              <p class="text-[11px] font-bold text-base-content/40 uppercase tracking-wide mb-1.5">Devis signé</p>
-              <div class="rounded-xl border border-base-200 overflow-hidden">
-                <a v-if="signedDevisUrl" :href="signedDevisUrl" target="_blank" rel="noopener"
-                  class="flex items-center gap-3 px-3 py-2.5 hover:bg-base-200/40 transition-colors group border-b border-base-200">
-                  <div class="w-9 h-9 rounded-lg bg-success/10 flex items-center justify-center shrink-0">
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="w-4 h-4 text-success">
-                      <path fill-rule="evenodd" d="M12.416 3.376a.75.75 0 0 1 .208 1.04l-5 7.5a.75.75 0 0 1-1.154.114l-3-3a.75.75 0 0 1 1.06-1.06l2.353 2.353 4.493-6.74a.75.75 0 0 1 1.04-.207Z" clip-rule="evenodd"/>
-                    </svg>
-                  </div>
-                  <div class="flex-1">
-                    <p class="text-sm font-semibold text-success group-hover:underline">Devis signé</p>
-                    <p class="text-xs text-base-content/40">Signé · PDF</p>
-                  </div>
-                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="w-4 h-4 text-base-content/20 shrink-0">
-                    <path d="M6.22 8.72a.75.75 0 0 0 1.06 1.06l5.22-5.22v1.69a.75.75 0 0 0 1.5 0v-3.5a.75.75 0 0 0-.75-.75h-3.5a.75.75 0 0 0 0 1.5h1.69L6.22 8.72ZM3.5 6.75c0-.69.56-1.25 1.25-1.25H7A.75.75 0 0 0 7 4H4.75A2.75 2.75 0 0 0 2 6.75v4.5A2.75 2.75 0 0 0 4.75 14h4.5A2.75 2.75 0 0 0 12 11.25V9a.75.75 0 0 0-1.5 0v2.25c0 .69-.56 1.25-1.25 1.25h-4.5c-.69 0-1.25-.56-1.25-1.25v-4.5Z"/>
-                  </svg>
-                </a>
-                <div v-if="reservation.status !== 'devis_confirme'" class="flex items-center gap-2 flex-wrap px-3 py-2.5">
-                  <input ref="devisSigneInput" type="file" accept=".pdf,.jpg,.jpeg,.png" class="hidden" @change="onDevisSigneChange" />
-                  <button class="btn btn-sm btn-ghost gap-1.5 text-base-content/60" @click="devisSigneInput.click()">
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="w-3.5 h-3.5">
-                      <path d="M8.75 3.75a.75.75 0 0 0-1.5 0v3.5h-3.5a.75.75 0 0 0 0 1.5h3.5v3.5a.75.75 0 0 0 1.5 0v-3.5h3.5a.75.75 0 0 0 0-1.5h-3.5v-3.5Z"/>
-                    </svg>
-                    {{ signedDevisUrl ? 'Remplacer' : 'Joindre le devis signé' }}
-                  </button>
-                  <span v-if="devisSigneFile" class="text-sm text-success truncate max-w-[140px]">{{ devisSigneFile.name }}</span>
-                  <button v-if="devisSigneFile" class="btn btn-sm btn-success ml-auto" :disabled="loading === 'upload_devis_signe'" @click="uploadDevisSigne">
-                    <span v-if="loading !== 'upload_devis_signe'">Enregistrer</span>
-                    <span v-else class="loading loading-spinner loading-xs"></span>
-                  </button>
-                </div>
+            <!-- ── Facture ────────────────────────────────────────────────── -->
+            <div v-if="reservation.status === 'devis_confirme' || (factureUrl && reservation.status === 'terminee')" class="rounded-xl border border-base-200 overflow-hidden shadow-sm">
+              <div class="px-4 py-2.5 border-b border-base-200 bg-blue-50 flex items-center gap-2">
+                <div class="w-0.5 h-3.5 bg-blue-400 rounded-full shrink-0"></div>
+                <span class="text-xs font-semibold text-gray-500 uppercase tracking-wide">Facture</span>
               </div>
-            </div>
-
-            <!-- ── Actions ──────────────────────────────────────────────── -->
-            <div class="flex items-center gap-2 pt-4 border-t border-base-200">
-              <!-- Annuler → left -->
-              <template v-for="a in actions" :key="a.key">
-                <button v-if="a.key === 'cancel'" class="btn btn-sm" :class="a.cls"
-                  :disabled="loading !== null"
-                  @click="act(a)">
-                  <span v-if="loading !== a.key">{{ a.label }}</span>
+              <a v-if="factureUrl" :href="factureUrl" target="_blank" rel="noopener"
+                class="flex items-center gap-4 px-4 py-4 hover:bg-base-200/40 transition-colors group border-b border-base-200">
+                <div class="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center shrink-0">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="w-5 h-5 text-primary">
+                    <path d="M2 3a1 1 0 0 1 1-1h7.586a1 1 0 0 1 .707.293l2.414 2.414A1 1 0 0 1 14 5.414V13a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V3Z"/>
+                  </svg>
+                </div>
+                <div class="flex-1 min-w-0">
+                  <p class="text-sm font-semibold text-primary group-hover:underline">Voir la facture</p>
+                  <p class="text-xs text-base-content/40">PDF</p>
+                </div>
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="w-4 h-4 text-base-content/20 shrink-0">
+                  <path d="M6.22 8.72a.75.75 0 0 0 1.06 1.06l5.22-5.22v1.69a.75.75 0 0 0 1.5 0v-3.5a.75.75 0 0 0-.75-.75h-3.5a.75.75 0 0 0 0 1.5h1.69L6.22 8.72ZM3.5 6.75c0-.69.56-1.25 1.25-1.25H7A.75.75 0 0 0 7 4H4.75A2.75 2.75 0 0 0 2 6.75v4.5A2.75 2.75 0 0 0 4.75 14h4.5A2.75 2.75 0 0 0 12 11.25V9a.75.75 0 0 0-1.5 0v2.25c0 .69-.56 1.25-1.25 1.25h-4.5c-.69 0-1.25-.56-1.25-1.25v-4.5Z"/>
+                </svg>
+              </a>
+              <div v-else class="flex items-center justify-center px-4 py-5 text-sm text-base-content/30">Aucune facture</div>
+              <div v-if="reservation.status === 'devis_confirme'" class="flex items-center gap-2 flex-wrap px-4 py-3.5 bg-base-50">
+                <input ref="factureInput" type="file" accept=".pdf,.jpg,.jpeg,.png" class="hidden" @change="onFactureChange" />
+                <button class="btn btn-sm gap-1.5" :class="factureUrl ? 'btn-ghost' : 'btn-outline'"
+                  @click="factureInput.click()">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="w-3.5 h-3.5">
+                    <path d="M8.75 3.75a.75.75 0 0 0-1.5 0v3.5h-3.5a.75.75 0 0 0 0 1.5h3.5v3.5a.75.75 0 0 0 1.5 0v-3.5h3.5a.75.75 0 0 0 0-1.5h-3.5v-3.5Z"/>
+                  </svg>
+                  {{ factureUrl ? 'Remplacer la facture' : 'Joindre la facture' }}
+                </button>
+                <span v-if="factureFile" class="text-sm text-success truncate max-w-[140px]">{{ factureFile.name }}</span>
+                <button v-if="factureFile" class="btn btn-sm btn-success ml-auto" :disabled="loading === 'upload_facture'" @click="uploadFacture">
+                  <span v-if="loading !== 'upload_facture'">Enregistrer</span>
                   <span v-else class="loading loading-spinner loading-xs"></span>
                 </button>
-              </template>
-              <!-- Middle spacer + secondary actions -->
-              <div class="flex-1 flex items-center gap-2 justify-center flex-wrap">
+              </div>
+            </div>
+
+          </div><!-- /space-y-4 -->
+
+            <!-- ── Actions ──────────────────────────────────────────────── -->
+            <div class="pt-4 mt-4 border-t border-base-200">
+              <div class="flex gap-2">
                 <template v-for="a in actions" :key="a.key">
-                  <button v-if="a.key !== 'cancel' && a.key !== 'confirm' && a.key !== 'done' && a.key !== 'quote'"
-                    class="btn btn-sm" :class="a.cls"
-                    :disabled="loading !== null"
+                  <button class="btn btn-sm flex-1" :class="a.cls"
+                    :disabled="loading !== null || ((a.key === 'send' || a.key === 'confirm') && confirmBlocked)"
                     @click="act(a)">
                     <span v-if="loading !== a.key">{{ a.label }}</span>
                     <span v-else class="loading loading-spinner loading-xs"></span>
                   </button>
                 </template>
               </div>
-              <!-- Valider → right -->
-              <template v-for="a in actions" :key="a.key">
-                <button v-if="a.key === 'confirm' || a.key === 'done' || a.key === 'quote'"
-                  class="btn btn-sm" :class="a.cls"
-                  :disabled="loading !== null || (a.key === 'confirm' && confirmBlocked)"
-                  @click="act(a)">
-                  <span v-if="loading !== a.key">{{ a.label }}</span>
-                  <span v-else class="loading loading-spinner loading-xs"></span>
-                </button>
-              </template>
+              <p v-if="confirmBlocked" class="text-xs text-base-content/40 text-center mt-1.5">
+                {{ confirmBlockedReason }} pour continuer
+              </p>
             </div>
-            <p v-if="confirmBlocked" class="text-xs text-base-content/40 text-right mt-1">
-              {{ confirmBlockedReason }} pour continuer
-            </p>
           </template>
 
           <!-- ── Sélection articles ────────────────────────────────────── -->
@@ -1590,7 +2001,7 @@ async function confirmStepBack() {
                   </div>
                   <div class="text-xs text-base-content/40 mt-0.5">
                     <template v-if="item.consoCount || item.matCount">
-                      <span v-if="item.consoCount" class="text-emerald-500">{{ item.consoCount }} conso.</span>
+                      <span v-if="item.consoCount" class="text-blue-500">{{ item.consoCount }} conso.</span>
                       <span v-if="item.consoCount && item.matCount" class="mx-1">·</span>
                       <span v-if="item.matCount" class="text-amber-500">{{ item.matCount }} matériel</span>
                     </template>
@@ -1689,14 +2100,14 @@ async function confirmStepBack() {
             <div class="space-y-3 mb-4">
 
               <!-- ① Gamme + matériel d'exploitation ──────────────────────── -->
-              <div class="border border-emerald-200 rounded-xl overflow-hidden">
-                <div class="bg-emerald-50 px-4 py-2.5 border-b border-emerald-200 flex items-center gap-2">
-                  <div class="w-5 h-5 rounded bg-emerald-600 flex items-center justify-center shrink-0">
+              <div class="border border-blue-200 rounded-xl overflow-hidden">
+                <div class="bg-blue-50 px-4 py-2.5 border-b border-blue-200 flex items-center gap-2">
+                  <div class="w-5 h-5 rounded bg-blue-600 flex items-center justify-center shrink-0">
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="white" class="w-3 h-3">
                       <path fill-rule="evenodd" d="M6.955 1.45A.5.5 0 0 1 7.452 1h1.096a.5.5 0 0 1 .497.45l.11 1.09a5.021 5.021 0 0 1 1.19.482l.875-.611a.5.5 0 0 1 .637.065l.774.775a.5.5 0 0 1 .065.636l-.611.875c.2.37.357.763.482 1.19l1.09.11a.5.5 0 0 1 .45.497v1.096a.5.5 0 0 1-.45.497l-1.09.11a5.02 5.02 0 0 1-.482 1.19l.611.875a.5.5 0 0 1-.065.637l-.775.774a.5.5 0 0 1-.636.065l-.875-.611a5.02 5.02 0 0 1-1.19.482l-.11 1.09a.5.5 0 0 1-.497.45H7.452a.5.5 0 0 1-.497-.45l-.11-1.09a5.021 5.021 0 0 1-1.19-.482l-.875.611a.5.5 0 0 1-.637-.065l-.774-.775a.5.5 0 0 1-.065-.636l.611-.875a5.021 5.021 0 0 1-.482-1.19l-1.09-.11A.5.5 0 0 1 1 8.548V7.452a.5.5 0 0 1 .45-.497l1.09-.11a5.02 5.02 0 0 1 .482-1.19l-.611-.875a.5.5 0 0 1 .065-.637l.775-.774a.5.5 0 0 1 .636-.065l.875.611a5.021 5.021 0 0 1 1.19-.482l.11-1.09ZM8 5.5a2.5 2.5 0 1 0 0 5 2.5 2.5 0 0 0 0-5Z" clip-rule="evenodd"/>
                     </svg>
                   </div>
-                  <p class="font-semibold text-sm text-emerald-900">Gamme</p>
+                  <p class="font-semibold text-sm text-blue-900">Gamme</p>
                 </div>
                 <div v-if="!currentGammes.length"
                   class="text-sm text-base-content/40 italic text-center py-6">
@@ -1704,8 +2115,8 @@ async function confirmStepBack() {
                 </div>
                 <div v-else>
                   <template v-for="group in currentGammes" :key="group.gamme.id">
-                    <div class="px-4 py-1.5 bg-emerald-50/60 border-b border-emerald-100">
-                      <span class="text-[10px] font-bold text-emerald-400 uppercase tracking-wider">{{ group.gamme.nom }}</span>
+                    <div class="px-4 py-1.5 bg-blue-50/60 border-b border-blue-100">
+                      <span class="text-[10px] font-bold text-blue-400 uppercase tracking-wider">{{ group.gamme.nom }}</span>
                     </div>
                     <div v-if="!group.materielArts.length && !pendingGammeArticles.some(p => p.gamme_id === group.gamme.id)"
                       class="px-4 py-3 text-xs text-base-content/30 italic border-b border-base-100">
@@ -1722,8 +2133,8 @@ async function confirmStepBack() {
                         <div class="flex-1 min-w-0">
                           <div class="flex items-center gap-2 flex-wrap">
                             <span class="font-mono font-semibold text-sm">{{ art.reference }}</span>
-                            <span class="text-base-content/30 text-xs">—</span>
-                            <span class="text-sm text-base-content/70">{{ art.produit_id?.name }}</span>
+                            <span v-if="art.name" class="text-base-content/30 text-xs">—</span>
+                            <span v-if="art.name" class="text-sm text-base-content/70">{{ art.name }}</span>
                             <span class="text-[10px] px-1.5 py-0.5 rounded-full font-semibold" :class="ETAT_CLS[art.etat]">{{ ETAT_LABEL[art.etat] ?? art.etat }}</span>
                           </div>
                           <p class="text-xs text-base-content/40 mt-0.5">{{ art.entrepot_id?.nom }}</p>
@@ -1735,46 +2146,46 @@ async function confirmStepBack() {
               </div>
 
               <!-- ② Consommables ────────────────────────────────────────── -->
-              <div class="border border-emerald-200 rounded-xl overflow-hidden">
-                <div class="bg-emerald-50 px-4 py-2.5 border-b border-emerald-200 flex items-center gap-2">
-                  <div class="w-5 h-5 rounded bg-emerald-500 flex items-center justify-center shrink-0">
+              <div class="border border-blue-200 rounded-xl overflow-hidden">
+                <div class="bg-blue-50 px-4 py-2.5 border-b border-blue-200 flex items-center gap-2">
+                  <div class="w-5 h-5 rounded bg-blue-500 flex items-center justify-center shrink-0">
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="white" class="w-3 h-3">
                       <path d="M2.5 6a1.5 1.5 0 0 1 1.5-1.5h8A1.5 1.5 0 0 1 13.5 6v1.293a2.5 2.5 0 0 1 0 4.414V13a.5.5 0 0 1-.5.5H3a.5.5 0 0 1-.5-.5v-1.293a2.5 2.5 0 0 1 0-4.414V6Z"/>
                     </svg>
                   </div>
-                  <p class="font-semibold text-sm text-emerald-900">Consommables</p>
+                  <p class="font-semibold text-sm text-blue-900">Consommables</p>
                 </div>
                 <div v-if="!currentGammes.some(g => g.consoItems.length)"
                   class="text-sm text-base-content/40 italic text-center py-5">
                   Aucun consommable associé
                 </div>
-                <div v-else class="divide-y divide-emerald-50/80">
+                <div v-else class="divide-y divide-blue-50/80">
                   <template v-for="group in currentGammes" :key="group.gamme.id">
                     <div v-for="item in group.consoItems" :key="item.id" class="flex items-center gap-3 px-4 py-3">
                       <div class="flex-1 min-w-0">
-                        <p class="text-sm font-semibold">{{ item.nom }}</p>
+                        <p class="text-sm font-semibold">{{ item.consommable_id?.nom }}</p>
                         <div class="flex items-center gap-2 mt-0.5 flex-wrap">
-                          <span v-if="item.unite" class="text-xs bg-emerald-100 text-emerald-600 px-1.5 py-0.5 rounded">{{ item.unite }}</span>
-                          <span v-if="item.prix_unitaire != null" class="text-xs text-emerald-600 font-medium">{{ item.prix_unitaire }} €/u</span>
+                          <span v-if="item.consommable_id?.unite" class="text-xs bg-blue-100 text-blue-600 px-1.5 py-0.5 rounded">{{ item.consommable_id?.unite }}</span>
+                          <span v-if="item.consommable_id?.prix_unitaire != null" class="text-xs text-blue-600 font-medium">{{ item.consommable_id?.prix_unitaire }} €/u</span>
                           <span class="text-xs font-medium"
-                            :class="(item.stock ?? 0) <= 0 ? 'text-error' : (item.stock ?? 0) <= 3 ? 'text-warning' : 'text-base-content/40'">
-                            Stock : {{ item.stock ?? 0 }}
+                            :class="(item.consommable_id?.stock ?? 0) <= 0 ? 'text-error' : (item.consommable_id?.stock ?? 0) <= 3 ? 'text-warning' : 'text-base-content/40'">
+                            Stock : {{ item.consommable_id?.stock ?? 0 }}
                           </span>
                         </div>
                       </div>
                       <div class="flex items-center gap-1 shrink-0">
-                        <button type="button" class="btn btn-xs btn-ghost btn-circle text-emerald-500"
-                          @click="setupState[currentSetupProduitId].consoQty[item.id] = Math.max(0, (setupState[currentSetupProduitId].consoQty[item.id] ?? 0) - 1)">−</button>
-                        <input type="number" min="0" :max="item.stock ?? 999"
-                          :value="setupState[currentSetupProduitId]?.consoQty[item.id] ?? 0"
-                          @change="setupState[currentSetupProduitId].consoQty[item.id] = Math.max(0, Math.min(item.stock ?? 999, Number($event.target.value)))"
+                        <button type="button" class="btn btn-xs btn-ghost btn-circle text-blue-500"
+                          @click="setupState[currentSetupProduitId].consoQty[item.consommable_id?.id] = Math.max(0, (setupState[currentSetupProduitId].consoQty[item.consommable_id?.id] ?? 0) - 1)">−</button>
+                        <input type="number" min="0" :max="item.consommable_id?.stock ?? 999"
+                          :value="setupState[currentSetupProduitId]?.consoQty[item.consommable_id?.id] ?? 0"
+                          @change="setupState[currentSetupProduitId].consoQty[item.consommable_id?.id] = Math.max(0, Math.min(item.consommable_id?.stock ?? 999, Number($event.target.value)))"
                           class="input input-bordered input-xs w-14 text-center font-bold" />
-                        <button type="button" class="btn btn-xs btn-ghost btn-circle text-emerald-500"
-                          @click="setupState[currentSetupProduitId].consoQty[item.id] = Math.min(item.stock ?? 999, (setupState[currentSetupProduitId].consoQty[item.id] ?? 0) + 1)">+</button>
+                        <button type="button" class="btn btn-xs btn-ghost btn-circle text-blue-500"
+                          @click="setupState[currentSetupProduitId].consoQty[item.consommable_id?.id] = Math.min(item.consommable_id?.stock ?? 999, (setupState[currentSetupProduitId].consoQty[item.consommable_id?.id] ?? 0) + 1)">+</button>
                       </div>
-                      <div class="w-16 text-right shrink-0 text-xs font-bold text-emerald-700">
-                        <span v-if="item.prix_unitaire != null && setupState[currentSetupProduitId]?.consoQty[item.id]">
-                          {{ (item.prix_unitaire * (setupState[currentSetupProduitId].consoQty[item.id] ?? 0)).toFixed(2) }} €
+                      <div class="w-16 text-right shrink-0 text-xs font-bold text-blue-700">
+                        <span v-if="item.consommable_id?.prix_unitaire != null && setupState[currentSetupProduitId]?.consoQty[item.consommable_id?.id]">
+                          {{ (item.consommable_id?.prix_unitaire * (setupState[currentSetupProduitId].consoQty[item.consommable_id?.id] ?? 0)).toFixed(2) }} €
                         </span>
                       </div>
                     </div>

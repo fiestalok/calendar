@@ -1,10 +1,13 @@
-<script setup>
+﻿<script setup>
 import { ref, computed, watch, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { storeToRefs } from 'pinia'
 import { useProduitsStore } from '../stores/produits'
 import { useArticlesStore } from '../stores/articles'
 import { useEntrepotsStore } from '../stores/entrepots'
+import { getProductImages, addProductImage, removeProductImage, uploadFile, assetUrl, getReservationsByProduit } from '../api/directus'
 
+const router         = useRouter()
 const produitsStore  = useProduitsStore()
 const articlesStore  = useArticlesStore()
 const entrepotsStore = useEntrepotsStore()
@@ -19,15 +22,15 @@ const selectedId = ref(null)
 const activeTab  = ref('infos')
 
 const ETAT = {
-  disponible:     { label: 'Disponible',   cls: 'bg-emerald-100 text-emerald-700' },
+  disponible:     { label: 'Disponible',   cls: 'bg-blue-100 text-blue-700' },
   en_location:    { label: 'En location',  cls: 'bg-blue-100 text-blue-700' },
   en_maintenance: { label: 'Maintenance',  cls: 'bg-amber-100 text-amber-700' },
   hors_service:   { label: 'Hors service', cls: 'bg-red-100 text-red-700' },
 }
 
 const CAT_COLORS = {
-  Structures: '#f97316', Mobilier: '#3b82f6', 'Audio/Vidéo': '#059669',
-  Éclairage: '#f59e0b', Vaisselle: '#10b981',
+  Structures: '#f97316', Mobilier: '#3b82f6', 'Audio/Vidéo': '#3b82f6',
+  Éclairage: '#f59e0b', Vaisselle: '#3b82f6',
 }
 
 const categories = computed(() => [...new Set(produits.value.map(p => p.categorie).filter(Boolean))])
@@ -52,7 +55,136 @@ const dispoCount = computed(() =>
   selectedArticles.value.filter(a => a.etat === 'disponible').length
 )
 
-function selectItem(p) { selectedId.value = p.id; activeTab.value = 'infos'; showAddForm.value = false }
+function selectItem(p) {
+  selectedId.value = p.id
+  activeTab.value = 'infos'
+  showAddForm.value = false
+  productImages.value = []
+}
+
+// ── Photos ────────────────────────────────────────────────────────────────────
+const productImages  = ref([])
+const photosLoading  = ref(false)
+const photoUploading = ref(false)
+const photoInput     = ref(null)
+const photoToast     = ref(null)
+
+watch(activeTab, (tab) => {
+  if (tab === 'infos' && selectedId.value) { loadPhotos(); loadCalResas() }
+})
+
+async function loadPhotos() {
+  photosLoading.value = true
+  try { productImages.value = await getProductImages(selectedId.value) }
+  catch { productImages.value = [] }
+  finally { photosLoading.value = false }
+}
+
+async function onPhotoFiles(e) {
+  const files = [...(e.target?.files ?? e.dataTransfer?.files ?? [])]
+  if (!files.length) return
+  photoUploading.value = true
+  try {
+    for (const file of files) {
+      const fd = new FormData()
+      fd.append('file', file)
+      const uploaded = await uploadFile(fd)
+      const row = await addProductImage(selectedId.value, uploaded.id)
+      productImages.value.push({ ...row, directus_files_id: uploaded.id })
+    }
+  } catch (err) {
+    showPhotoToast(err.message ?? 'Erreur upload', 'error')
+  } finally {
+    photoUploading.value = false
+    if (photoInput.value) photoInput.value.value = ''
+  }
+}
+
+async function deletePhoto(row) {
+  await removeProductImage(row.id).catch(() => {})
+  productImages.value = productImages.value.filter(p => p.id !== row.id)
+}
+
+function showPhotoToast(msg, type = 'success') {
+  photoToast.value = { msg, type }
+  setTimeout(() => { photoToast.value = null }, 3000)
+}
+
+function onDropZone(e) {
+  e.preventDefault()
+  onPhotoFiles(e)
+}
+
+// ── Calendrier disponibilité ──────────────────────────────────────────────────
+const calResas     = ref([])
+const calLoading   = ref(false)
+const calYear      = ref(new Date().getFullYear())
+const calMonth     = ref(new Date().getMonth()) // 0-indexed
+
+const ACTIVE_STATUSES = ['en_attente', 'devis_realise', 'devis_confirme']
+
+watch(selectedId, (id) => {
+  calResas.value = []
+  productImages.value = []
+  if (id && activeTab.value === 'infos') { loadPhotos(); loadCalResas() }
+})
+
+async function loadCalResas() {
+  calLoading.value = true
+  try {
+    const rows = await getReservationsByProduit(selectedId.value)
+    calResas.value = (rows ?? [])
+      .map(r => r.reservations_id)
+      .filter(r => r && ACTIVE_STATUSES.includes(r.status))
+  } catch { calResas.value = [] }
+  finally { calLoading.value = false }
+}
+
+function calPrev() {
+  if (calMonth.value === 0) { calMonth.value = 11; calYear.value-- }
+  else calMonth.value--
+}
+function calNext() {
+  if (calMonth.value === 11) { calMonth.value = 0; calYear.value++ }
+  else calMonth.value++
+}
+
+const calDays = computed(() => {
+  const year = calYear.value
+  const month = calMonth.value
+  const firstDay = new Date(year, month, 1).getDay() // 0=Sun
+  const daysInMonth = new Date(year, month + 1, 0).getDate()
+  // Adjust so week starts Monday
+  const startOffset = (firstDay + 6) % 7
+  const cells = []
+  for (let i = 0; i < startOffset; i++) cells.push(null)
+  for (let d = 1; d <= daysInMonth; d++) cells.push(d)
+  return cells
+})
+
+const totalArticleCount = computed(() => selectedArticles.value.length)
+
+function reservationsOnDay(day) {
+  if (!day) return 0
+  const d = new Date(calYear.value, calMonth.value, day)
+  d.setHours(12)
+  return calResas.value.filter(r => {
+    const s = new Date(r.date_start); s.setHours(0)
+    const e = new Date(r.date_end);   e.setHours(23, 59)
+    return d >= s && d <= e
+  }).length
+}
+
+function dayInfo(day) {
+  if (!day) return null
+  const total = totalArticleCount.value
+  if (total === 0) return { cls: '', dot: null, avail: 0 }
+  const booked = reservationsOnDay(day)
+  const avail = total - booked
+  if (avail <= 0) return { cls: 'bg-red-50',    dot: 'bg-red-400',    avail: 0,     label: 'text-red-500' }
+  if (avail <= 1) return { cls: 'bg-orange-50', dot: 'bg-orange-400', avail,        label: 'text-orange-500' }
+  return              { cls: 'bg-green-50',  dot: 'bg-green-400',  avail,        label: 'text-green-600' }
+}
 
 function formatCurrency(n) {
   return new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(n ?? 0)
@@ -326,7 +458,7 @@ async function doDeleteArticle() {
               <div class="text-[11px] text-gray-400 mt-0.5">{{ p.categorie }}</div>
             </div>
             <div class="text-right flex-shrink-0">
-              <div class="text-sm font-bold text-emerald-600">{{ artCountFor(p.id) }}</div>
+              <div class="text-sm font-bold text-blue-600">{{ artCountFor(p.id) }}</div>
               <div class="text-[10px] text-gray-400">dispo</div>
             </div>
           </div>
@@ -363,7 +495,7 @@ async function doDeleteArticle() {
                 <h2 class="text-xl font-bold text-gray-900 leading-tight">{{ selected.nom }}</h2>
                 <div class="flex items-center gap-2 mt-1.5 flex-wrap">
                   <span class="text-[11px] px-2 py-0.5 rounded-full font-semibold bg-orange-50 text-orange-700 border border-orange-100">{{ selected.categorie }}</span>
-                  <span v-if="selected.badge" class="text-[11px] px-2 py-0.5 rounded-full font-semibold bg-emerald-50 text-emerald-700 border border-emerald-100">{{ selected.badge }}</span>
+                  <span v-if="selected.badge" class="text-[11px] px-2 py-0.5 rounded-full font-semibold bg-blue-50 text-blue-700 border border-blue-100">{{ selected.badge }}</span>
                 </div>
               </div>
               <div class="flex gap-3 flex-shrink-0">
@@ -400,7 +532,10 @@ async function doDeleteArticle() {
           <!-- Tabs -->
           <div class="bg-white border-b border-gray-200 px-6 flex-shrink-0">
             <div class="flex">
-              <button v-for="t in [{ key: 'infos', label: 'Informations' }, { key: 'articles', label: `Articles (${selectedArticles.length})` }]"
+              <button v-for="t in [
+                  { key: 'infos',    label: 'Informations' },
+                  { key: 'articles', label: `Articles (${selectedArticles.length})` },
+                ]"
                 :key="t.key"
                 class="px-5 py-3 text-[13px] font-semibold border-b-2 transition-colors -mb-px uppercase tracking-wide"
                 :class="activeTab === t.key ? 'border-orange-500 text-orange-600' : 'border-transparent text-gray-400 hover:text-gray-600'"
@@ -473,6 +608,119 @@ async function doDeleteArticle() {
                       <span class="text-sm text-gray-500">jour(s) de retour</span>
                     </div>
                     <p class="text-[11px] text-gray-400 mt-1.5">L'article reste bloqué X jours après la fin de la réservation.</p>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Photos -->
+              <div class="bg-white rounded-xl shadow-sm overflow-hidden mt-4">
+                <div class="px-5 py-3 border-b border-gray-100 flex items-center justify-between">
+                  <div class="flex items-center gap-2">
+                    <span class="text-[#e65100]">▲</span>
+                    <span class="text-sm font-semibold text-gray-700">Photos</span>
+                    <span v-if="productImages.length" class="text-xs text-gray-400">{{ productImages.length }} photo{{ productImages.length > 1 ? 's' : '' }}</span>
+                  </div>
+                  <label class="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 bg-orange-500 hover:bg-orange-600 text-white font-semibold rounded-lg transition-colors cursor-pointer">
+                    <svg v-if="!photoUploading" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="w-3.5 h-3.5">
+                      <path d="M8.75 3.75a.75.75 0 0 0-1.5 0v3.5h-3.5a.75.75 0 0 0 0 1.5h3.5v3.5a.75.75 0 0 0 1.5 0v-3.5h3.5a.75.75 0 0 0 0-1.5h-3.5v-3.5Z"/>
+                    </svg>
+                    <span v-if="photoUploading" class="loading loading-spinner loading-xs"></span>
+                    {{ photoUploading ? 'Upload…' : 'Ajouter des photos' }}
+                    <input ref="photoInput" type="file" accept="image/*" multiple class="hidden" @change="onPhotoFiles" :disabled="photoUploading" />
+                  </label>
+                </div>
+                <div class="p-5" @dragover.prevent @drop="onDropZone">
+                  <div v-if="photosLoading" class="flex items-center justify-center h-20 text-sm text-gray-400">Chargement…</div>
+                  <div v-else-if="!productImages.length"
+                    class="border-2 border-dashed border-gray-200 rounded-xl p-8 text-center cursor-pointer hover:border-orange-300 hover:bg-orange-50/30 transition-colors"
+                    @click="photoInput?.click()">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1" stroke="currentColor" class="w-10 h-10 mx-auto text-gray-300 mb-2">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="m2.25 15.75 5.159-5.159a2.25 2.25 0 0 1 3.182 0l5.159 5.159m-1.5-1.5 1.409-1.409a2.25 2.25 0 0 1 3.182 0l2.909 2.909m-18 3.75h16.5a1.5 1.5 0 0 0 1.5-1.5V6a1.5 1.5 0 0 0-1.5-1.5H3.75A1.5 1.5 0 0 0 2.25 6v12a1.5 1.5 0 0 0 1.5 1.5Zm10.5-11.25h.008v.008h-.008V8.25Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z"/>
+                    </svg>
+                    <p class="text-sm text-gray-400 font-medium">Glissez des images ici ou cliquez</p>
+                  </div>
+                  <div v-else class="grid grid-cols-4 gap-3">
+                    <div v-for="img in productImages" :key="img.id"
+                      class="relative group rounded-xl overflow-hidden aspect-square bg-gray-100 shadow-sm">
+                      <img :src="assetUrl(img.directus_files_id)" class="w-full h-full object-cover" :alt="selected.nom" />
+                      <div class="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition-colors flex items-center justify-center">
+                        <button @click="deletePhoto(img)"
+                          class="opacity-0 group-hover:opacity-100 transition-opacity bg-red-500 hover:bg-red-600 text-white rounded-full p-1.5 shadow-lg">
+                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="w-3.5 h-3.5">
+                            <path fill-rule="evenodd" d="M5 3.25V4H2.75a.75.75 0 0 0 0 1.5h.3l.815 8.15A1.5 1.5 0 0 0 5.357 15h5.285a1.5 1.5 0 0 0 1.493-1.35l.815-8.15h.3a.75.75 0 0 0 0-1.5H11v-.75A2.25 2.25 0 0 0 8.75 1h-1.5A2.25 2.25 0 0 0 5 3.25Zm2.25-.75a.75.75 0 0 0-.75.75V4h3v-.75a.75.75 0 0 0-.75-.75h-1.5Z" clip-rule="evenodd"/>
+                          </svg>
+                        </button>
+                      </div>
+                    </div>
+                    <label class="rounded-xl border-2 border-dashed border-gray-200 aspect-square flex flex-col items-center justify-center cursor-pointer hover:border-orange-300 hover:bg-orange-50/30 transition-colors">
+                      <svg v-if="!photoUploading" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="w-5 h-5 text-gray-300">
+                        <path d="M8.75 3.75a.75.75 0 0 0-1.5 0v3.5h-3.5a.75.75 0 0 0 0 1.5h3.5v3.5a.75.75 0 0 0 1.5 0v-3.5h3.5a.75.75 0 0 0 0-1.5h-3.5v-3.5Z"/>
+                      </svg>
+                      <span v-if="photoUploading" class="loading loading-spinner loading-sm text-orange-400"></span>
+                      <span class="text-[10px] text-gray-300 mt-1">Ajouter</span>
+                      <input type="file" accept="image/*" multiple class="hidden" @change="onPhotoFiles" :disabled="photoUploading" />
+                    </label>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Toast photos -->
+              <div v-if="photoToast" class="fixed bottom-6 right-6 z-50">
+                <div :class="['px-4 py-2.5 rounded-xl shadow-lg text-sm font-medium text-white',
+                  photoToast.type === 'error' ? 'bg-error' : 'bg-success']">
+                  {{ photoToast.msg }}
+                </div>
+              </div>
+
+              <!-- Calendrier disponibilité -->
+              <div class="bg-white rounded-xl shadow-sm overflow-hidden mt-4">
+                <div class="px-5 py-3 border-b border-gray-100 flex items-center justify-between">
+                  <div class="flex items-center gap-2">
+                    <span class="text-[#e65100]">▲</span>
+                    <span class="text-sm font-semibold text-gray-700">Disponibilité</span>
+                    <span class="text-xs text-gray-400">{{ totalArticleCount }} exemplaire{{ totalArticleCount > 1 ? 's' : '' }}</span>
+                  </div>
+                  <div class="flex items-center gap-3">
+                    <div class="flex items-center gap-3 text-xs text-gray-500">
+                      <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-green-400 inline-block"></span>Dispo</span>
+                      <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-orange-400 inline-block"></span>1 restant</span>
+                      <span class="flex items-center gap-1"><span class="w-2 h-2 rounded-full bg-red-400 inline-block"></span>Complet</span>
+                    </div>
+                    <div class="flex items-center gap-1">
+                      <button @click="calPrev" class="btn btn-xs btn-ghost btn-circle">‹</button>
+                      <span class="text-sm font-semibold text-gray-700 w-36 text-center capitalize">
+                        {{ new Date(calYear, calMonth).toLocaleDateString('fr-FR', { month: 'long', year: 'numeric' }) }}
+                      </span>
+                      <button @click="calNext" class="btn btn-xs btn-ghost btn-circle">›</button>
+                    </div>
+                  </div>
+                </div>
+                <div v-if="calLoading" class="flex items-center justify-center h-24 text-sm text-gray-400">Chargement…</div>
+                <div v-else class="p-4">
+                  <div class="grid grid-cols-7 mb-1">
+                    <div v-for="j in ['Lun','Mar','Mer','Jeu','Ven','Sam','Dim']" :key="j"
+                      class="text-center text-[11px] font-semibold text-gray-400 uppercase py-1">{{ j }}</div>
+                  </div>
+                  <div class="grid grid-cols-7 gap-0.5">
+                    <div v-for="(day, i) in calDays" :key="i"
+                      :class="['rounded-lg p-1 min-h-[44px] transition-colors', day ? (dayInfo(day)?.cls || 'hover:bg-gray-50') : '']">
+                      <template v-if="day">
+                        <span class="text-xs font-semibold text-gray-600 block text-center leading-none mb-1">{{ day }}</span>
+                        <template v-if="dayInfo(day)?.dot">
+                          <div class="flex justify-center mb-0.5">
+                            <span :class="['w-1.5 h-1.5 rounded-full', dayInfo(day).dot]"></span>
+                          </div>
+                          <div class="text-center">
+                            <span :class="['text-[9px] font-bold', dayInfo(day).label]">
+                              {{ dayInfo(day).avail }}/{{ totalArticleCount }}
+                            </span>
+                          </div>
+                        </template>
+                      </template>
+                    </div>
+                  </div>
+                  <div v-if="totalArticleCount === 0" class="text-center text-xs text-gray-400 mt-3 italic">
+                    Aucun exemplaire enregistré.
                   </div>
                 </div>
               </div>
@@ -559,7 +807,7 @@ async function doDeleteArticle() {
                 <table v-if="selectedArticles.length > 0" class="w-full text-sm">
                   <thead class="bg-gray-50 border-b border-gray-100">
                     <tr>
-                      <th class="px-4 py-2.5 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Référence</th>
+                      <th class="px-4 py-2.5 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Désignation</th>
                       <th class="px-4 py-2.5 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">État</th>
                       <th class="px-4 py-2.5 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Entrepôt</th>
                       <th class="px-4 py-2.5 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Emplacement</th>
@@ -580,6 +828,14 @@ async function doDeleteArticle() {
                       <td class="px-4 py-3 text-gray-400 text-xs">{{ formatDate(a.date_achat) }}</td>
                       <td class="px-4 py-3 text-right">
                         <div class="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <button @click="router.push({ path: '/articles', query: { search: a.reference } })"
+                            title="Voir dans Articles"
+                            class="p-1.5 rounded-lg hover:bg-blue-50 text-gray-400 hover:text-blue-600 transition-colors">
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="w-3.5 h-3.5">
+                              <path d="M6.22 8.72a.75.75 0 0 0 1.06 1.06l5.22-5.22v1.69a.75.75 0 0 0 1.5 0v-3.5a.75.75 0 0 0-.75-.75h-3.5a.75.75 0 0 0 0 1.5h1.69L6.22 8.72Z"/>
+                              <path d="M3.5 6.75c0-.69.56-1.25 1.25-1.25H7A.75.75 0 0 0 7 4H4.75A2.75 2.75 0 0 0 2 6.75v4.5A2.75 2.75 0 0 0 4.75 14h4.5A2.75 2.75 0 0 0 12 11.25V9a.75.75 0 0 0-1.5 0v2.25c0 .69-.56 1.25-1.25 1.25h-4.5c-.69 0-1.25-.56-1.25-1.25v-4.5Z"/>
+                            </svg>
+                          </button>
                           <button @click="openArtEdit(a)"
                             class="p-1.5 rounded-lg hover:bg-orange-50 text-gray-400 hover:text-orange-600 transition-colors">
                             <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="w-3.5 h-3.5">
@@ -600,6 +856,7 @@ async function doDeleteArticle() {
                 </table>
               </div>
             </template>
+
 
           </div>
         </template>

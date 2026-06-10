@@ -4,6 +4,7 @@ import { getArticles, createArticle, patchArticle as apiPatch, deleteArticle as 
 function mapArticle(a) {
   return {
     id:           a.id,
+    type:         a.type        ?? 'principal',
     produit_id:   a.produit_id?.id   ?? a.produit_id,
     produit_nom:  a.produit_id?.name ?? '',
     name:         a.name       ?? '',

@@ -1,8 +1,9 @@
-<script setup>
+﻿<script setup>
 import { ref, computed, onMounted } from 'vue'
 import {
   getGammes, createGamme, patchGamme, deleteGamme,
-  getConsommables, createConsommable, patchConsommable, deleteConsommable,
+  getAllGammeConsommables, createConsommable, patchConsommable, deleteConsommable,
+  createGammeConsommable, patchGammeConsommable, deleteGammeConsommable,
   getProduitGammes, createProduitGamme, deleteProduitGamme,
   getAllGammeArticlesMateriel, createGammeArticleMateriel, deleteGammeArticleMateriel,
   getProduits, getArticles,
@@ -10,7 +11,8 @@ import {
 
 // ── State ─────────────────────────────────────────────────────────────────
 const gammes             = ref([])
-const consommables       = ref([])   // all consommables
+const consommables       = ref([])   // junction rows: {id, gamme_id, quantite_defaut, consommable_id: {...}}
+const editingConsoId     = ref(null) // consommables.id being edited
 const produitGammes      = ref([])   // produits ↔ gammes junction
 const gammeArts          = ref([])   // gamme_articles_materiel junction rows
 const articlesSecondaires= ref([])   // articles with type='secondaire'
@@ -42,7 +44,7 @@ async function load() {
   try {
     const [g, c, pg, ga, arts, p] = await Promise.all([
       getGammes(),
-      getConsommables(),
+      getAllGammeConsommables(),
       getProduitGammes(),
       getAllGammeArticlesMateriel(),
       getArticles({ filter: { type: { _eq: 'secondaire' } } }),
@@ -64,7 +66,7 @@ onMounted(load)
 const selected = computed(() => gammes.value.find(g => g.id === selectedId.value) ?? null)
 
 const selectedConsommables = computed(() =>
-  consommables.value.filter(c => c.gamme_id === selectedId.value)
+  consommables.value.filter(c => (c.gamme_id?.id ?? c.gamme_id) === selectedId.value)
 )
 
 const selectedGammeArts = computed(() =>
@@ -145,19 +147,22 @@ async function removeGamme(g) {
 
 // ── Consommable CRUD ───────────────────────────────────────────────────────
 function openNewConsommable(type = 'consommable') {
-  editingCId.value = null
+  editingCId.value    = null
+  editingConsoId.value = null
   cForm.value = { type, nom: '', unite: '', quantite_defaut: 1, prix_unitaire: '', stock: 0 }
   showCForm.value = true
 }
 
 function openEditConsommable(c) {
-  editingCId.value = c.id
+  editingCId.value     = c.id                    // junction id
+  editingConsoId.value = c.consommable_id?.id    // consommable id
   cForm.value = {
-    type: c.type ?? 'consommable',
-    nom: c.nom, unite: c.unite ?? '',
-    quantite_defaut: c.quantite_defaut ?? 1,
-    prix_unitaire: c.prix_unitaire ?? '',
-    stock: c.stock ?? 0,
+    type: 'consommable',
+    nom:            c.consommable_id?.nom       ?? '',
+    unite:          c.consommable_id?.unite     ?? '',
+    quantite_defaut: c.quantite_defaut          ?? 1,
+    prix_unitaire:  c.consommable_id?.prix_unitaire ?? '',
+    stock:          c.consommable_id?.stock     ?? 0,
   }
   showCForm.value = true
 }
@@ -166,22 +171,32 @@ async function saveConsommable() {
   if (!cForm.value.nom.trim()) return
   savingC.value = true
   try {
-    const data = {
-      gamme_id: selectedId.value,
-      type: cForm.value.type ?? 'consommable',
-      nom: cForm.value.nom.trim(),
-      unite: cForm.value.unite || null,
-      quantite_defaut: cForm.value.quantite_defaut ? Number(cForm.value.quantite_defaut) : null,
+    const consoData = {
+      nom:          cForm.value.nom.trim(),
+      unite:        cForm.value.unite || null,
       prix_unitaire: cForm.value.prix_unitaire !== '' ? Number(cForm.value.prix_unitaire) : null,
-      stock: cForm.value.stock !== '' ? Number(cForm.value.stock) : 0,
+      stock:        cForm.value.stock !== '' ? Number(cForm.value.stock) : 0,
+    }
+    const junctionData = {
+      quantite_defaut: cForm.value.quantite_defaut ? Number(cForm.value.quantite_defaut) : null,
     }
     if (editingCId.value) {
-      await patchConsommable(editingCId.value, data)
+      await patchConsommable(editingConsoId.value, consoData)
+      await patchGammeConsommable(editingCId.value, junctionData)
       const idx = consommables.value.findIndex(c => c.id === editingCId.value)
-      if (idx >= 0) consommables.value[idx] = { ...consommables.value[idx], ...data }
+      if (idx >= 0) consommables.value[idx] = {
+        ...consommables.value[idx],
+        ...junctionData,
+        consommable_id: { ...consommables.value[idx].consommable_id, ...consoData },
+      }
     } else {
-      const created = await createConsommable(data)
-      consommables.value.push(created)
+      const created = await createConsommable(consoData)
+      const junction = await createGammeConsommable({
+        gamme_id: selectedId.value,
+        consommable_id: created.id,
+        ...junctionData,
+      })
+      consommables.value.push({ ...junction, consommable_id: created })
     }
     showCForm.value = false
     showToast('Consommable sauvegardé', 'success')
@@ -193,19 +208,19 @@ async function saveConsommable() {
 }
 
 async function removeConsommable(c) {
-  if (!confirm(`Supprimer "${c.nom}" ?`)) return
+  if (!confirm(`Supprimer "${c.consommable_id?.nom ?? 'ce consommable'}" de cette gamme ?`)) return
   try {
-    await deleteConsommable(c.id)
+    await deleteGammeConsommable(c.id)
     consommables.value = consommables.value.filter(x => x.id !== c.id)
-    showToast('Consommable supprimé', 'success')
+    showToast('Consommable retiré', 'success')
   } catch (e) { showToast(e.message ?? 'Erreur', 'error') }
 }
 
 // ── Stock inline edit ──────────────────────────────────────────────────────
 async function updateStock(c, delta) {
-  const newStock = Math.max(0, (c.stock ?? 0) + delta)
+  const newStock = Math.max(0, (c.consommable_id?.stock ?? 0) + delta)
   try {
-    await patchConsommable(c.id, { stock: newStock })
+    await patchConsommable(c.consommable_id.id, { stock: newStock })
     const idx = consommables.value.findIndex(x => x.id === c.id)
     if (idx >= 0) consommables.value[idx] = { ...consommables.value[idx], stock: newStock }
   } catch (e) { showToast(e.message ?? 'Erreur', 'error') }
@@ -293,13 +308,13 @@ function fmtPrix(v) {
           <button
             v-for="g in gammes" :key="g.id"
             class="w-full text-left px-3 py-2.5 rounded-lg transition-colors flex items-start gap-2.5 group"
-            :class="selectedId === g.id ? 'bg-emerald-50 text-emerald-700' : 'hover:bg-gray-50 text-gray-700'"
+            :class="selectedId === g.id ? 'bg-blue-50 text-blue-700' : 'hover:bg-gray-50 text-gray-700'"
             @click="selectedId = g.id; showCForm = false; showProduitPicker = false"
           >
             <div class="w-7 h-7 rounded-md flex items-center justify-center shrink-0 mt-0.5"
-                 :class="selectedId === g.id ? 'bg-emerald-100' : 'bg-gray-100'">
+                 :class="selectedId === g.id ? 'bg-blue-100' : 'bg-gray-100'">
               <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="w-3.5 h-3.5"
-                   :class="selectedId === g.id ? 'text-emerald-600' : 'text-gray-400'">
+                   :class="selectedId === g.id ? 'text-blue-600' : 'text-gray-400'">
                 <path d="M5.127 3.502 5.25 3.5h9.5c.041 0 .082 0 .123.002A2.251 2.251 0 0 0 12.75 2h-5.5a2.25 2.25 0 0 0-2.123 1.502ZM1 10.25A2.25 2.25 0 0 1 3.25 8h13.5A2.25 2.25 0 0 1 19 10.25v5.5A2.25 2.25 0 0 1 16.75 18H3.25A2.25 2.25 0 0 1 1 15.75v-5.5ZM3.25 6.5c-.04 0-.082 0-.123.002A2.25 2.25 0 0 1 5.25 5h9.5c.98 0 1.814.627 2.123 1.502a3.819 3.819 0 0 0-.123-.002H3.25Z"/>
               </svg>
             </div>
@@ -367,16 +382,16 @@ function fmtPrix(v) {
                 class="flex items-center gap-3 px-5 py-3 hover:bg-gray-50 group">
                 <div class="flex-1 min-w-0">
                   <div class="flex items-center gap-2 flex-wrap">
-                    <span class="font-medium text-sm text-gray-800">{{ c.nom }}</span>
-                    <span v-if="c.unite" class="text-xs bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">{{ c.unite }}</span>
-                    <span v-if="c.prix_unitaire != null" class="text-xs text-emerald-600 font-medium">{{ fmtPrix(c.prix_unitaire) }}/unité</span>
+                    <span class="font-medium text-sm text-gray-800">{{ c.consommable_id?.nom }}</span>
+                    <span v-if="c.consommable_id?.unite" class="text-xs bg-gray-100 text-gray-500 px-1.5 py-0.5 rounded">{{ c.consommable_id?.unite }}</span>
+                    <span v-if="c.consommable_id?.prix_unitaire != null" class="text-xs text-blue-600 font-medium">{{ fmtPrix(c.consommable_id?.prix_unitaire) }}/unité</span>
                   </div>
                   <p class="text-xs text-gray-400 mt-0.5">Qté par défaut : <strong class="text-gray-600">{{ c.quantite_defaut ?? '—' }}</strong></p>
                 </div>
                 <div class="flex items-center gap-1 shrink-0">
-                  <button class="btn btn-xs btn-ghost btn-circle" @click="updateStock(c, -1)" :disabled="(c.stock ?? 0) <= 0">−</button>
+                  <button class="btn btn-xs btn-ghost btn-circle" @click="updateStock(c, -1)" :disabled="(c.consommable_id?.stock ?? 0) <= 0">−</button>
                   <span class="text-sm font-semibold w-8 text-center"
-                    :class="(c.stock ?? 0) <= 0 ? 'text-error' : (c.stock ?? 0) <= 3 ? 'text-warning' : 'text-success'">{{ c.stock ?? 0 }}</span>
+                    :class="(c.consommable_id?.stock ?? 0) <= 0 ? 'text-error' : (c.consommable_id?.stock ?? 0) <= 3 ? 'text-warning' : 'text-success'">{{ c.consommable_id?.stock ?? 0 }}</span>
                   <button class="btn btn-xs btn-ghost btn-circle" @click="updateStock(c, +1)">+</button>
                   <span class="text-xs text-gray-400 ml-1">en stock</span>
                 </div>
@@ -418,11 +433,11 @@ function fmtPrix(v) {
                   {{ art.reference?.slice(0, 2)?.toUpperCase() }}
                 </div>
                 <div class="flex-1 min-w-0">
-                  <div class="flex items-center gap-2">
-                    <span class="font-medium text-sm text-gray-800">{{ art.reference }}</span>
-                    <span class="text-xs bg-amber-100 text-amber-700 px-1.5 py-0.5 rounded font-medium">Secondaire</span>
+                  <div class="flex items-center gap-2 flex-wrap">
+                    <span class="font-medium text-sm text-gray-800">{{ art.name || art.reference }}</span>
+                    <span class="text-xs font-mono text-gray-400">{{ art.reference }}</span>
                     <span class="text-xs px-1.5 py-0.5 rounded font-medium"
-                      :class="art.etat === 'disponible' ? 'bg-emerald-100 text-emerald-700'
+                      :class="art.etat === 'disponible' ? 'bg-blue-100 text-blue-700'
                         : art.etat === 'loue' ? 'bg-blue-100 text-blue-700'
                         : 'bg-red-100 text-red-700'">
                       {{ art.etat === 'disponible' ? 'Disponible' : art.etat === 'loue' ? 'Loué' : art.etat }}
@@ -452,8 +467,9 @@ function fmtPrix(v) {
                     {{ art.reference?.slice(0, 2)?.toUpperCase() }}
                   </div>
                   <div class="flex-1 min-w-0">
-                    <span class="font-medium">{{ art.reference }}</span>
-                    <span class="text-gray-400 ml-2 text-xs">{{ art.produit_id?.name }}</span>
+                    <span class="font-medium">{{ art.name || art.reference }}</span>
+                    <span class="text-gray-400 ml-1.5 text-xs font-mono">{{ art.reference }}</span>
+                    <span class="text-gray-400 ml-2 text-xs">· {{ art.produit_id?.name }}</span>
                   </div>
                   <div class="flex items-center gap-2 shrink-0">
                     <span class="text-xs text-gray-400">{{ art.entrepot_id?.nom }}</span>
@@ -470,9 +486,9 @@ function fmtPrix(v) {
           </div>
 
           <!-- Formulaire consommable / matériel (partagé) -->
-          <div v-if="showCForm" class="bg-white rounded-xl border-2 border-emerald-200 p-5 space-y-4">
+          <div v-if="showCForm" class="bg-white rounded-xl border-2 border-blue-200 p-5 space-y-4">
             <div class="flex items-center justify-between">
-              <p class="text-sm font-semibold text-emerald-700">
+              <p class="text-sm font-semibold text-blue-700">
                 {{ editingCId ? 'Modifier' : 'Ajouter' }} —
                 <span v-if="cForm.type === 'materiel'">Matériel d'exploitation</span>
                 <span v-else>Consommable</span>
@@ -550,9 +566,9 @@ function fmtPrix(v) {
               </div>
               <div v-else class="space-y-1 max-h-48 overflow-y-auto">
                 <button v-for="p in unassignedProduits" :key="p.id"
-                  class="w-full text-left px-3 py-2 rounded-lg hover:bg-emerald-50 text-sm flex items-center gap-2 transition-colors"
+                  class="w-full text-left px-3 py-2 rounded-lg hover:bg-blue-50 text-sm flex items-center gap-2 transition-colors"
                   @click="assignProduit(p)">
-                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="w-4 h-4 text-emerald-400 shrink-0">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="w-4 h-4 text-blue-400 shrink-0">
                     <path d="M8.75 3.75a.75.75 0 0 0-1.5 0v3.5h-3.5a.75.75 0 0 0 0 1.5h3.5v3.5a.75.75 0 0 0 1.5 0v-3.5h3.5a.75.75 0 0 0 0-1.5h-3.5v-3.5Z"/>
                   </svg>
                   {{ p.name }}

@@ -17,6 +17,13 @@ export function clearTokens() {
   refreshToken = null
 }
 
+export function assetUrl(fileId) {
+  if (!fileId) return null
+  const base = BASE_URL.replace(/\/$/, '')
+  const token = accessToken ? `?access_token=${accessToken}` : ''
+  return `${base}/assets/${fileId}${token}`
+}
+
 export function setOnExpired(cb) { onExpiredCallback = cb }
 export function setOnRefresh(cb) { onRefreshCallback = cb }
 
@@ -83,7 +90,8 @@ export const getReservations = (params = {}) =>
 
 export const getReservationsByClient = (clientId) =>
   request('GET', '/items/reservations', null, {
-    fields: ['id', 'date_start', 'date_end', 'status', 'delivery', 'delivery_address', 'total_price', 'notes'].join(','),
+    fields: ['id', 'date_start', 'date_end', 'status', 'delivery', 'delivery_address', 'total_price', 'notes',
+             'fichier_devis', 'fichier_devis_signe', 'fichier_facture'].join(','),
     filter: { client: { _eq: clientId } },
     sort: '-date_start',
     limit: -1,
@@ -92,14 +100,14 @@ export const getReservationsByClient = (clientId) =>
 export const getReservationProduits = (reservationId) =>
   request('GET', '/items/reservations_produits', null, {
     filter: { reservations_id: { _eq: reservationId } },
-    fields: 'produits_id.id,produits_id.name,produits_id.images_urls,quantity,unit_price',
+    fields: 'produits_id.id,produits_id.name,produits_id.images_urls,produits_id.image,quantity,unit_price',
     limit: -1,
   })
 
 export const getReservationArticles = (reservationId) =>
   request('GET', '/items/reservations_articles', null, {
     filter: { reservations_id: { _eq: reservationId } },
-    fields: 'id,articles_id.id,articles_id.type,articles_id.reference,articles_id.notes,articles_id.etat,articles_id.produit_id.name,articles_id.entrepot_id.nom',
+    fields: 'id,articles_id.id,articles_id.type,articles_id.name,articles_id.reference,articles_id.notes,articles_id.etat,articles_id.produit_id.name,articles_id.entrepot_id.nom',
     limit: -1,
   }).catch(() => [])
 
@@ -115,14 +123,14 @@ export const getReservationArticleIds = (reservationId) =>
 export const getArticlesForReservation = (reservationId) =>
   request('GET', '/items/articles', null, {
     filter: { reservations_articles: { reservations_id: { _eq: reservationId } } },
-    fields: 'id,reference,notes,etat,produit_id.id,produit_id.name,entrepot_id.id,entrepot_id.nom',
+    fields: 'id,name,reference,notes,etat,produit_id.id,produit_id.name,entrepot_id.id,entrepot_id.nom',
     limit: -1,
   }).catch(() => [])
 
 export const getArticlesByIds = (ids) =>
   request('GET', '/items/articles', null, {
     filter: { id: { _in: ids } },
-    fields: 'id,type,reference,notes,etat,produit_id.id,produit_id.name,entrepot_id.id,entrepot_id.nom',
+    fields: 'id,type,name,reference,notes,etat,produit_id.id,produit_id.name,entrepot_id.id,entrepot_id.nom',
     limit: -1,
   }).catch(() => [])
 
@@ -131,7 +139,7 @@ export const deleteReservationArticle = (id) =>
 
 export const getReservationValidation = (id) =>
   request('GET', `/items/reservations/${id}`, null, {
-    fields: 'devis_realise_par,devis_confirme_par,terminee_par,fichier_devis_signe,fichier_devis,livraison,installation',
+    fields: 'devis_realise_par,devis_confirme_par,terminee_par,fichier_devis_signe,fichier_devis,fichier_facture,livraison,installation',
   }).catch(() => ({}))
 
 export const patchReservation = (id, data) =>
@@ -199,7 +207,7 @@ export const getProduits = (params = {}) =>
   request('GET', '/items/produits', null, {
     fields: [
       'id', 'status', 'name', 'slug', 'price', 'badge',
-      'short_description', 'long_description', 'images_urls', 'specs',
+      'short_description', 'long_description', 'images_urls', 'image', 'specs',
       'jours_avant', 'jours_apres',
       'category.id', 'category.name',
     ].join(','),
@@ -281,7 +289,7 @@ export const deleteDevis = (id) => request('DELETE', `/items/devis/${id}`)
 export const getArticlesByProduit = (produitIds) =>
   request('GET', '/items/articles', null, {
     filter: { produit_id: { _in: Array.isArray(produitIds) ? produitIds : [produitIds] } },
-    fields: 'id,reference,etat,emplacement,date_achat,valeur_achat,notes,produit_id.id,produit_id.name,entrepot_id.id,entrepot_id.nom',
+    fields: 'id,name,reference,etat,emplacement,date_achat,valeur_achat,notes,produit_id.id,produit_id.name,entrepot_id.id,entrepot_id.nom',
     limit: -1,
     sort: 'reference',
   }).catch(() => [])
@@ -301,32 +309,46 @@ export const createGamme = (data) => request('POST', '/items/gammes', data)
 export const patchGamme  = (id, data) => request('PATCH', `/items/gammes/${id}`, data)
 export const deleteGamme = (id) => request('DELETE', `/items/gammes/${id}`)
 
-// ── Consommables ────────────────────────────────────────────────────────────
+// ── Consommables (catalogue stock) ──────────────────────────────────────────
+const CONSO_FIELDS       = 'id,nom,unite,stock,seuil_alerte,prix_unitaire,description'
+const GAMME_CONSO_FIELDS = 'id,gamme_id,quantite_defaut,consommable_id.id,consommable_id.nom,consommable_id.unite,consommable_id.stock,consommable_id.seuil_alerte,consommable_id.prix_unitaire'
+
 export const getConsommables = (filter = {}) =>
-  request('GET', '/items/gamme_consommables', null, {
-    fields: 'id,type,nom,unite,quantite_defaut,prix_unitaire,stock,gamme_id',
+  request('GET', '/items/consommables', null, {
+    fields: CONSO_FIELDS,
     sort: 'nom',
     limit: -1,
     ...(Object.keys(filter).length ? { filter } : {}),
   }).catch(() => [])
 
-export const getConsommablesByGammes = (gammeIds) =>
+export const getAllGammeConsommables = () =>
   request('GET', '/items/gamme_consommables', null, {
-    filter: { gamme_id: { _in: gammeIds } },
-    fields: 'id,type,nom,unite,quantite_defaut,prix_unitaire,stock,gamme_id',
-    sort: 'nom',
+    fields: GAMME_CONSO_FIELDS,
+    sort: 'consommable_id.nom',
     limit: -1,
   }).catch(() => [])
 
-export const createConsommable = (data) => request('POST', '/items/gamme_consommables', data)
-export const patchConsommable  = (id, data) => request('PATCH', `/items/gamme_consommables/${id}`, data)
-export const deleteConsommable = (id) => request('DELETE', `/items/gamme_consommables/${id}`)
+export const getConsommablesByGammes = (gammeIds) =>
+  request('GET', '/items/gamme_consommables', null, {
+    filter: { gamme_id: { _in: gammeIds } },
+    fields: GAMME_CONSO_FIELDS,
+    sort: 'consommable_id.nom',
+    limit: -1,
+  }).catch(() => [])
+
+export const createConsommable      = (data) => request('POST', '/items/consommables', data)
+export const patchConsommable       = (id, data) => request('PATCH', `/items/consommables/${id}`, data)
+export const deleteConsommable      = (id) => request('DELETE', `/items/consommables/${id}`)
+
+export const createGammeConsommable = (data) => request('POST', '/items/gamme_consommables', data)
+export const patchGammeConsommable  = (id, data) => request('PATCH', `/items/gamme_consommables/${id}`, data)
+export const deleteGammeConsommable = (id) => request('DELETE', `/items/gamme_consommables/${id}`)
 
 // ── Gammes ↔ Articles secondaires (matériel d'exploitation) ────────────────
 export const getGammeArticlesMateriel = (gammeIds) =>
   request('GET', '/items/gamme_articles_materiel', null, {
     filter: { gamme_id: { _in: Array.isArray(gammeIds) ? gammeIds : [gammeIds] } },
-    fields: 'id,gamme_id,article_id.id,article_id.type,article_id.reference,article_id.etat,article_id.produit_id.name,article_id.entrepot_id.nom',
+    fields: 'id,gamme_id,article_id.id,article_id.type,article_id.name,article_id.reference,article_id.etat,article_id.produit_id.name,article_id.entrepot_id.nom',
     limit: -1,
   }).catch(() => [])
 
@@ -342,7 +364,7 @@ export const deleteGammeArticleMateriel = (id)    => request('DELETE', `/items/g
 export const getAllArticlesSecondaires = () =>
   request('GET', '/items/articles', null, {
     filter: { type: { _eq: 'secondaire' } },
-    fields: 'id,reference,etat,produit_id.id,produit_id.name,entrepot_id.id,entrepot_id.nom',
+    fields: 'id,name,reference,etat,produit_id.id,produit_id.name,entrepot_id.id,entrepot_id.nom',
     sort: 'reference',
     limit: -1,
   }).catch(() => [])
@@ -362,7 +384,7 @@ export const deleteProduitGamme = (id)    => request('DELETE', `/items/produits_
 export const getReservationConsommables = (reservationId) =>
   request('GET', '/items/reservations_consommables', null, {
     filter: { reservations_id: { _eq: reservationId } },
-    fields: 'id,quantite,consommable_id.id,consommable_id.type,consommable_id.nom,consommable_id.unite,consommable_id.prix_unitaire,consommable_id.gamme_id',
+    fields: 'id,quantite,quantite_confirmee,consommable_id.id,consommable_id.nom,consommable_id.unite,consommable_id.stock,consommable_id.prix_unitaire',
     limit: -1,
   }).catch(() => [])
 
@@ -371,6 +393,21 @@ export const createReservationConsommable = (data) =>
 
 export const deleteReservationConsommable = (id) =>
   request('DELETE', `/items/reservations_consommables/${id}`)
+
+// ── Produits images (M2M) ─────────────────────────────────────────────────────
+export const getProductImages = (produitId) =>
+  request('GET', '/items/produits_images', null, {
+    filter: { produit_id: { _eq: produitId } },
+    fields: 'id,produit_id,directus_files_id,sort',
+    sort: 'sort',
+    limit: -1,
+  })
+
+export const addProductImage = (produitId, fileId) =>
+  request('POST', '/items/produits_images', { produit_id: produitId, directus_files_id: fileId })
+
+export const removeProductImage = (id) =>
+  request('DELETE', `/items/produits_images/${id}`)
 
 // ── File upload ────────────────────────────────────────────────────────────────
 export async function uploadFile(formData) {

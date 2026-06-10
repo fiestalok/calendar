@@ -1,4 +1,4 @@
-<script setup>
+﻿<script setup>
 import { ref, computed, onMounted } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useStockStore } from '../stores/stock'
@@ -57,7 +57,7 @@ function echeanceInfo(dateStr) {
 }
 
 const STATUT = {
-  disponible:     { label: 'Disponible',    cls: 'bg-emerald-100 text-emerald-700' },
+  disponible:     { label: 'Disponible',    cls: 'bg-blue-100 text-blue-700' },
   en_location:    { label: 'En location',   cls: 'bg-blue-100 text-blue-700' },
   en_maintenance: { label: 'Maintenance',   cls: 'bg-amber-100 text-amber-700' },
   hors_service:   { label: 'Hors service',  cls: 'bg-red-100 text-red-700' },
@@ -66,7 +66,7 @@ const STATUT = {
 const FACTURE_TYPE = {
   Achat:       'bg-blue-100 text-blue-700',
   Réparation:  'bg-orange-100 text-orange-700',
-  Révision:    'bg-emerald-100 text-emerald-700',
+  Révision:    'bg-blue-100 text-blue-700',
   Remplacement:'bg-amber-100 text-amber-700',
 }
 
@@ -145,9 +145,9 @@ const TABS = [
                  :style="{background: {
                    Structures: '#f97316',
                    Mobilier: '#3b82f6',
-                   'Audio/Vidéo': '#059669',
+                   'Audio/Vidéo': '#3b82f6',
                    Éclairage: '#f59e0b',
-                   Vaisselle: '#10b981',
+                   Vaisselle: '#3b82f6',
                  }[item.categorie] ?? '#6b7280'}">
               {{ item.nom[0] }}
             </div>
@@ -165,7 +165,7 @@ const TABS = [
             <span
               class="w-2 h-2 rounded-full flex-shrink-0"
               :class="{
-                'bg-emerald-400': item.statut === 'disponible',
+                'bg-blue-400': item.statut === 'disponible',
                 'bg-blue-400': item.statut === 'en_location',
                 'bg-amber-400': item.statut === 'en_maintenance',
                 'bg-red-400': item.statut === 'hors_service',
@@ -208,8 +208,8 @@ const TABS = [
               <!-- Category icon -->
               <div class="w-12 h-12 rounded-xl flex items-center justify-center text-xl font-bold text-white flex-shrink-0 shadow-sm"
                    :style="{background: {
-                     Structures: '#f97316', Mobilier: '#3b82f6', 'Audio/Vidéo': '#059669',
-                     Éclairage: '#f59e0b', Vaisselle: '#10b981',
+                     Structures: '#f97316', Mobilier: '#3b82f6', 'Audio/Vidéo': '#3b82f6',
+                     Éclairage: '#f59e0b', Vaisselle: '#3b82f6',
                    }[selected.categorie] ?? '#6b7280'}">
                 {{ selected.nom[0] }}
               </div>
@@ -285,7 +285,7 @@ const TABS = [
                   </div>
                   <div>
                     <div class="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-1">Disponibles</div>
-                    <div class="text-emerald-700 font-semibold">{{ selected.quantite_disponible }} unités</div>
+                    <div class="text-blue-700 font-semibold">{{ selected.quantite_disponible }} unités</div>
                   </div>
                   <div>
                     <div class="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-1">En location</div>

@@ -1,4 +1,4 @@
-<script setup>
+﻿<script setup>
 import { ref, computed, onMounted, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useRoute, useRouter } from 'vue-router'
@@ -36,7 +36,7 @@ const ROLES = [
   { key: 'principal',   label: 'Principal',   cls: 'bg-blue-100 text-blue-700' },
   { key: 'secondaire',  label: 'Secondaire',  cls: 'bg-slate-100 text-slate-600' },
   { key: 'facturation', label: 'Facturation', cls: 'bg-amber-100 text-amber-700' },
-  { key: 'technique',   label: 'Technique',   cls: 'bg-emerald-100 text-emerald-700' },
+  { key: 'technique',   label: 'Technique',   cls: 'bg-blue-100 text-blue-700' },
   { key: 'autre',       label: 'Autre',       cls: 'bg-gray-100 text-gray-500' },
 ]
 const ROLE_MAP   = Object.fromEntries(ROLES.map(r => [r.key, r]))
@@ -273,8 +273,8 @@ async function saveNotes() {
 // ── DEVIS_STATUS ──────────────────────────────────────────────────────────────
 const DEVIS_STATUS = {
   realise:  { label: 'Devis réalisé',  cls: 'bg-slate-100 text-slate-600' },
-  confirme: { label: 'Devis confirmé', cls: 'bg-emerald-100 text-emerald-700' },
-  facture:  { label: 'Facturé',        cls: 'bg-emerald-100 text-emerald-700' },
+  confirme: { label: 'Devis confirmé', cls: 'bg-blue-100 text-blue-700' },
+  facture:  { label: 'Facturé',        cls: 'bg-blue-100 text-blue-700' },
 }
 
 // ── Devis ─────────────────────────────────────────────────────────────────────
@@ -388,7 +388,7 @@ const selectedReservation = ref(null)
 const RESERVATION_STATUS = {
   en_attente:     { label: 'En attente',    cls: 'bg-amber-100 text-amber-700' },
   devis_realise:  { label: 'Devis réalisé', cls: 'bg-blue-100 text-blue-700' },
-  devis_confirme: { label: 'Confirmée',     cls: 'bg-emerald-100 text-emerald-700' },
+  devis_confirme: { label: 'Confirmée',     cls: 'bg-blue-100 text-blue-700' },
   terminee:       { label: 'Terminée',      cls: 'bg-gray-100 text-gray-600' },
   annulee:        { label: 'Annulée',       cls: 'bg-red-100 text-red-600' },
 }
@@ -462,14 +462,14 @@ const inputCls = 'w-full text-sm px-3 py-2 border border-gray-200 rounded-lg foc
             :class="selectedId === client.id ? 'bg-blue-50 border-l-blue-600' : 'border-l-transparent'"
             @click="selectClient(client)">
             <div class="w-8 h-8 rounded-full flex items-center justify-center text-xs font-bold flex-shrink-0"
-              :class="client.type === 'entreprise' ? 'bg-emerald-100 text-emerald-700' : 'bg-emerald-100 text-emerald-700'">
+              :class="client.type === 'entreprise' ? 'bg-blue-100 text-blue-700' : 'bg-blue-100 text-blue-700'">
               {{ initials(client) }}
             </div>
             <div class="flex-1 min-w-0">
               <div class="text-sm font-medium text-gray-900 truncate">{{ displayName(client) }}</div>
               <div class="flex items-center gap-1.5 mt-0.5">
                 <span class="text-[10px] px-1.5 py-0.5 rounded-full font-semibold"
-                  :class="client.type === 'entreprise' ? 'bg-emerald-100 text-emerald-600' : 'bg-emerald-100 text-emerald-600'">
+                  :class="client.type === 'entreprise' ? 'bg-blue-100 text-blue-600' : 'bg-blue-100 text-blue-600'">
                   {{ client.type === 'entreprise' ? 'Entreprise' : 'Particulier' }}
                 </span>
                 <span class="text-[11px] text-gray-400 truncate">{{ client.ville }}</span>
@@ -512,14 +512,14 @@ const inputCls = 'w-full text-sm px-3 py-2 border border-gray-200 rounded-lg foc
             </div>
             <div class="flex items-center gap-4">
               <div class="w-11 h-11 rounded-full flex items-center justify-center text-base font-bold flex-shrink-0"
-                :class="selected.type === 'entreprise' ? 'bg-emerald-100 text-emerald-700' : 'bg-emerald-100 text-emerald-700'">
+                :class="selected.type === 'entreprise' ? 'bg-blue-100 text-blue-700' : 'bg-blue-100 text-blue-700'">
                 {{ initials(selected) }}
               </div>
               <div class="flex-1 min-w-0">
                 <h2 class="text-xl font-bold text-gray-900 leading-tight">{{ displayName(selected) }}</h2>
                 <div class="flex items-center gap-2 mt-1 flex-wrap">
                   <span class="text-[11px] px-2 py-0.5 rounded-full font-semibold border"
-                    :class="selected.type === 'entreprise' ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-emerald-50 text-emerald-700 border-emerald-200'">
+                    :class="selected.type === 'entreprise' ? 'bg-blue-50 text-blue-700 border-blue-200' : 'bg-blue-50 text-blue-700 border-blue-200'">
                     {{ selected.type === 'entreprise' ? 'Entreprise' : 'Particulier' }}
                   </span>
                   <span v-if="selected.secteur" class="text-[11px] px-2 py-0.5 rounded-full bg-gray-100 text-gray-600 border border-gray-200">{{ selected.secteur }}</span>
@@ -539,7 +539,7 @@ const inputCls = 'w-full text-sm px-3 py-2 border border-gray-200 rounded-lg foc
             <div class="flex items-center gap-2 mt-3 ml-[60px]">
               <a v-if="selected.telephone" :href="'tel:' + selected.telephone"
                 class="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 border border-gray-200 rounded-lg text-gray-600 hover:bg-gray-50 transition-colors">
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="w-3.5 h-3.5 text-emerald-500">
+                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="w-3.5 h-3.5 text-blue-500">
                   <path fill-rule="evenodd" d="M3.5 2A1.5 1.5 0 0 0 2 3.5V5c0 5.523 4.477 10 10 10h1.5a1.5 1.5 0 0 0 1.5-1.5v-1.232a1.5 1.5 0 0 0-1.077-1.443l-2.317-.664a1.5 1.5 0 0 0-1.661.627l-.267.4a1.5 1.5 0 0 1-1.899.518 8.5 8.5 0 0 1-3.925-3.925 1.5 1.5 0 0 1 .518-1.9l.4-.266a1.5 1.5 0 0 0 .627-1.661L5.73 3.077A1.5 1.5 0 0 0 4.298 2H3.5Z" clip-rule="evenodd"/>
                 </svg>
                 {{ selected.telephone }}
@@ -948,7 +948,7 @@ const inputCls = 'w-full text-sm px-3 py-2 border border-gray-200 rounded-lg foc
                   </div>
                   <div v-for="h in [...notesHistory].reverse()" :key="h.id" class="px-5 py-4">
                     <div class="flex items-center gap-2 mb-2">
-                      <div class="w-6 h-6 rounded-full bg-emerald-100 flex items-center justify-center text-[9px] font-bold text-emerald-600 flex-shrink-0">
+                      <div class="w-6 h-6 rounded-full bg-blue-100 flex items-center justify-center text-[9px] font-bold text-blue-600 flex-shrink-0">
                         {{ initialsStr(h.author) }}
                       </div>
                       <span class="text-xs font-semibold text-gray-700">{{ h.author }}</span>
@@ -1002,7 +1002,7 @@ const inputCls = 'w-full text-sm px-3 py-2 border border-gray-200 rounded-lg foc
                       </td>
                       <td class="px-4 py-3">
                         <span v-if="d.facture_id || d.facture_ref"
-                          class="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full font-semibold bg-emerald-100 text-emerald-700">
+                          class="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full font-semibold bg-blue-100 text-blue-700">
                           <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 12 12" fill="currentColor" class="w-2.5 h-2.5">
                             <path fill-rule="evenodd" d="M3 1.5A1.5 1.5 0 0 0 1.5 3v6A1.5 1.5 0 0 0 3 10.5h6A1.5 1.5 0 0 0 10.5 9V5.621a1.5 1.5 0 0 0-.44-1.06L7.94 2.439A1.5 1.5 0 0 0 6.878 2H3Zm2.25 6a.75.75 0 0 0 0 1.5h3a.75.75 0 0 0 0-1.5h-3Zm0-2.25a.75.75 0 0 0 0 1.5h3a.75.75 0 0 0 0-1.5h-3Z" clip-rule="evenodd"/>
                           </svg>
@@ -1055,6 +1055,7 @@ const inputCls = 'w-full text-sm px-3 py-2 border border-gray-200 rounded-lg foc
                       <th class="px-4 py-2.5 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Statut</th>
                       <th class="px-4 py-2.5 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Notes</th>
                       <th class="px-4 py-2.5 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Livraison</th>
+                      <th class="px-4 py-2.5 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Documents</th>
                       <th class="px-4 py-2.5 text-right text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Montant</th>
                     </tr>
                   </thead>
@@ -1079,6 +1080,29 @@ const inputCls = 'w-full text-sm px-3 py-2 border border-gray-200 rounded-lg foc
                           {{ r.delivery_address || 'Livraison' }}
                         </span>
                         <span v-else class="text-[11px] text-gray-300">Retrait</span>
+                      </td>
+                      <td class="px-4 py-3" @click.stop>
+                        <div class="flex items-center gap-1.5">
+                          <a v-if="r.fichier_devis" :href="getFileUrl(r.fichier_devis)" target="_blank"
+                            class="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-semibold bg-blue-50 text-blue-600 hover:bg-blue-100 transition-colors"
+                            title="Devis généré">
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 12 12" fill="currentColor" class="w-2.5 h-2.5"><path fill-rule="evenodd" d="M3 1.5A1.5 1.5 0 0 0 1.5 3v6A1.5 1.5 0 0 0 3 10.5h6A1.5 1.5 0 0 0 10.5 9V5.621a1.5 1.5 0 0 0-.44-1.06L7.94 2.439A1.5 1.5 0 0 0 6.878 2H3Zm2.25 6a.75.75 0 0 0 0 1.5h3a.75.75 0 0 0 0-1.5h-3Zm0-2.25a.75.75 0 0 0 0 1.5h3a.75.75 0 0 0 0-1.5h-3Z" clip-rule="evenodd"/></svg>
+                            Devis
+                          </a>
+                          <a v-if="r.fichier_devis_signe" :href="getFileUrl(r.fichier_devis_signe)" target="_blank"
+                            class="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-semibold bg-green-50 text-green-600 hover:bg-green-100 transition-colors"
+                            title="Devis signé">
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 12 12" fill="currentColor" class="w-2.5 h-2.5"><path fill-rule="evenodd" d="M3 1.5A1.5 1.5 0 0 0 1.5 3v6A1.5 1.5 0 0 0 3 10.5h6A1.5 1.5 0 0 0 10.5 9V5.621a1.5 1.5 0 0 0-.44-1.06L7.94 2.439A1.5 1.5 0 0 0 6.878 2H3Zm2.25 6a.75.75 0 0 0 0 1.5h3a.75.75 0 0 0 0-1.5h-3Zm0-2.25a.75.75 0 0 0 0 1.5h3a.75.75 0 0 0 0-1.5h-3Z" clip-rule="evenodd"/></svg>
+                            Signé
+                          </a>
+                          <a v-if="r.fichier_facture" :href="getFileUrl(r.fichier_facture)" target="_blank"
+                            class="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-semibold bg-orange-50 text-orange-600 hover:bg-orange-100 transition-colors"
+                            title="Facture">
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 12 12" fill="currentColor" class="w-2.5 h-2.5"><path fill-rule="evenodd" d="M3 1.5A1.5 1.5 0 0 0 1.5 3v6A1.5 1.5 0 0 0 3 10.5h6A1.5 1.5 0 0 0 10.5 9V5.621a1.5 1.5 0 0 0-.44-1.06L7.94 2.439A1.5 1.5 0 0 0 6.878 2H3Zm2.25 6a.75.75 0 0 0 0 1.5h3a.75.75 0 0 0 0-1.5h-3Zm0-2.25a.75.75 0 0 0 0 1.5h3a.75.75 0 0 0 0-1.5h-3Z" clip-rule="evenodd"/></svg>
+                            Facture
+                          </a>
+                          <span v-if="!r.fichier_devis && !r.fichier_devis_signe && !r.fichier_facture" class="text-[11px] text-gray-300">—</span>
+                        </div>
                       </td>
                       <td class="px-4 py-3 text-right font-semibold text-gray-800">
                         {{ r.total_price != null ? formatCurrency(r.total_price) : '—' }}
@@ -1295,36 +1319,36 @@ const inputCls = 'w-full text-sm px-3 py-2 border border-gray-200 rounded-lg foc
                 </div>
               </div>
               <!-- Facture si statut = facture -->
-              <div v-if="devisDraft.statut === 'facture'" class="bg-emerald-50 border border-emerald-200 rounded-xl p-4 space-y-3">
+              <div v-if="devisDraft.statut === 'facture'" class="bg-blue-50 border border-blue-200 rounded-xl p-4 space-y-3">
                 <div class="flex items-center justify-between">
-                  <label class="text-[11px] font-semibold text-emerald-700 uppercase tracking-wide">Facture associée</label>
+                  <label class="text-[11px] font-semibold text-blue-700 uppercase tracking-wide">Facture associée</label>
                   <div class="flex gap-1">
                     <button @click="factureMode = 'select'; devisDraft.facture_ref = ''"
                       class="text-[11px] px-2.5 py-1 rounded-md font-semibold transition-colors"
-                      :class="factureMode === 'select' ? 'bg-emerald-600 text-white' : 'text-emerald-500 hover:bg-emerald-100'">
+                      :class="factureMode === 'select' ? 'bg-blue-600 text-white' : 'text-blue-500 hover:bg-blue-100'">
                       Sélectionner
                     </button>
                     <button @click="factureMode = 'manual'; devisDraft.facture_id = ''"
                       class="text-[11px] px-2.5 py-1 rounded-md font-semibold transition-colors"
-                      :class="factureMode === 'manual' ? 'bg-emerald-600 text-white' : 'text-emerald-500 hover:bg-emerald-100'">
+                      :class="factureMode === 'manual' ? 'bg-blue-600 text-white' : 'text-blue-500 hover:bg-blue-100'">
                       Référence manuelle
                     </button>
                   </div>
                 </div>
                 <div v-if="factureMode === 'select'">
                   <select v-model="devisDraft.facture_id"
-                    class="w-full text-sm px-3 py-2 border border-emerald-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-400 bg-white">
+                    class="w-full text-sm px-3 py-2 border border-blue-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white">
                     <option value="">— Sélectionner une facture —</option>
                     <option v-for="f in factures" :key="f.id" :value="f.id">
                       {{ f.numero }}{{ f.montant != null ? ` — ${formatCurrency(f.montant)}` : '' }}
                     </option>
                   </select>
-                  <p v-if="!factures.length" class="text-[11px] text-emerald-400 mt-1">Aucune facture disponible.</p>
+                  <p v-if="!factures.length" class="text-[11px] text-blue-400 mt-1">Aucune facture disponible.</p>
                 </div>
                 <div v-else>
                   <input v-model="devisDraft.facture_ref" type="text" placeholder="FAC-2024-001"
-                    class="w-full text-sm px-3 py-2 border border-emerald-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-400 bg-white font-mono"/>
-                  <p class="text-[11px] text-emerald-500 mt-1">Référence de la facture émise pour ce devis</p>
+                    class="w-full text-sm px-3 py-2 border border-blue-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white font-mono"/>
+                  <p class="text-[11px] text-blue-500 mt-1">Référence de la facture émise pour ce devis</p>
                 </div>
               </div>
               <!-- PDF -->
@@ -1439,10 +1463,10 @@ const inputCls = 'w-full text-sm px-3 py-2 border border-gray-200 rounded-lg foc
                   </div>
                   <!-- Facture -->
                   <div v-if="linkedDevis.facture_id || linkedDevis.facture_ref" class="flex items-center gap-2">
-                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="w-4 h-4 text-emerald-500 flex-shrink-0">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="w-4 h-4 text-blue-500 flex-shrink-0">
                       <path fill-rule="evenodd" d="M3 1.5A1.5 1.5 0 0 0 1.5 3v10A1.5 1.5 0 0 0 3 14.5h10a1.5 1.5 0 0 0 1.5-1.5V5.621a1.5 1.5 0 0 0-.44-1.06L11.94 2.439A1.5 1.5 0 0 0 10.878 2H3Zm2.25 6a.75.75 0 0 0 0 1.5h5a.75.75 0 0 0 0-1.5h-5Zm0 2.5a.75.75 0 0 0 0 1.5h5a.75.75 0 0 0 0-1.5h-5Z" clip-rule="evenodd"/>
                     </svg>
-                    <span class="text-sm font-semibold text-emerald-700">
+                    <span class="text-sm font-semibold text-blue-700">
                       Facture {{ linkedDevis.facture_numero ?? linkedDevis.facture_ref }}
                     </span>
                   </div>

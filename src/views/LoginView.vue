@@ -1,10 +1,11 @@
-<script setup>
+﻿<script setup>
 import { ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '../stores/auth'
 
-const router = useRouter()
-const auth   = useAuthStore()
+const router  = useRouter()
+const auth    = useAuthStore()
+const logoSrc = import.meta.env.BASE_URL + 'Logo.png'
 
 const email    = ref('')
 const password = ref('')
@@ -31,22 +32,14 @@ async function submit() {
 <template>
   <div
     class="min-h-screen flex items-center justify-center p-4"
-    style="background: linear-gradient(135deg, #3d1a72 0%, #1a0840 100%);"
+    style="background: linear-gradient(135deg, #1c2b4b 0%, #0e1a2e 100%);"
   >
     <div class="w-full max-w-[340px]">
 
       <!-- Brand -->
       <div class="flex items-center gap-3 mb-8 justify-center">
-        <div
-          class="w-11 h-11 rounded-xl flex items-center justify-center shadow-lg flex-shrink-0"
-          style="background: linear-gradient(135deg, #059669, #047857);"
-        >
-          <span class="text-white font-black text-xl leading-none">F</span>
-        </div>
-        <div>
-          <div class="text-white font-bold text-xl tracking-wide">Fiestalok</div>
-          <div class="text-emerald-300/55 text-xs font-medium">CRM Événementiel</div>
-        </div>
+        <img :src="logoSrc" class="h-12 object-contain" alt="Fiestalok" />
+        <div class="text-blue-300/55 text-xs font-medium">CRM Événementiel</div>
       </div>
 
       <!-- Card -->
@@ -93,7 +86,7 @@ async function submit() {
           <button
             type="submit"
             class="w-full py-2.5 rounded-xl text-sm font-semibold text-white transition-opacity disabled:opacity-50 flex items-center justify-center mt-1"
-            style="background: linear-gradient(135deg, #059669, #047857);"
+            style="background: linear-gradient(135deg, #3b82f6, #2563eb);"
             :disabled="loading || !email || !password"
           >
             <span v-if="!loading">Se connecter</span>

@@ -1,4 +1,4 @@
-<script setup>
+﻿<script setup>
 import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useReservationsStore } from '../stores/reservations'
@@ -8,6 +8,7 @@ const route = useRoute()
 const store = useReservationsStore()
 const auth  = useAuthStore()
 const pendingCount = computed(() => store.pendingCount)
+const logoSrc = import.meta.env.BASE_URL + 'Logo.png'
 
 const router = useRouter()
 
@@ -33,6 +34,7 @@ const ICONS = {
   gammes:    '<path d="M5.127 3.502 5.25 3.5h9.5c.041 0 .082 0 .123.002A2.251 2.251 0 0 0 12.75 2h-5.5a2.25 2.25 0 0 0-2.123 1.502ZM1 10.25A2.25 2.25 0 0 1 3.25 8h13.5A2.25 2.25 0 0 1 19 10.25v5.5A2.25 2.25 0 0 1 16.75 18H3.25A2.25 2.25 0 0 1 1 15.75v-5.5ZM3.25 6.5c-.04 0-.082 0-.123.002A2.25 2.25 0 0 1 5.25 5h9.5c.98 0 1.814.627 2.123 1.502a3.819 3.819 0 0 0-.123-.002H3.25Z"/>',
   booking:   '<path fill-rule="evenodd" d="M5.75 2a.75.75 0 0 1 .75.75V4h7V2.75a.75.75 0 0 1 1.5 0V4h.25A2.75 2.75 0 0 1 18 6.75v8.5A2.75 2.75 0 0 1 15.25 15h-1.5l.5 2.75a.75.75 0 0 1-1.47.26L12.38 15H7.62l-.4 2.01a.75.75 0 0 1-1.47-.26L6.25 15h-1.5A2.75 2.75 0 0 1 2 12.25v-8.5A2.75 2.75 0 0 1 4.75 4H5V2.75A.75.75 0 0 1 5.75 2Zm-1 5.5c-.69 0-1.25.56-1.25 1.25v3.5c0 .69.56 1.25 1.25 1.25h10.5c.69 0 1.25-.56 1.25-1.25v-3.5c0-.69-.56-1.25-1.25-1.25H4.75Z" clip-rule="evenodd"/>',
   warehouse: '<path fill-rule="evenodd" d="M1 2.75A.75.75 0 0 1 1.75 2h16.5a.75.75 0 0 1 0 1.5H18v8.75A2.75 2.75 0 0 1 15.25 15h-1.072l.798 3.06a.75.75 0 0 1-1.452.39L13.41 18H6.59l-.114.45a.75.75 0 0 1-1.452-.39L5.823 15H4.75A2.75 2.75 0 0 1 2 12.25V3.5h-.25A.75.75 0 0 1 1 2.75ZM7.373 15l-.391 1.5h6.036l-.391-1.5H7.373Zm5.52-9.252a.75.75 0 1 0-1.06-1.06l-1.83 1.83-.97-.97a.75.75 0 0 0-1.06 0L6.22 8.28a.75.75 0 1 0 1.06 1.06l1.22-1.22.97.97a.75.75 0 0 0 1.06 0l2.363-2.349Z" clip-rule="evenodd"/>',
+  conso:     '<path d="M2.5 6a1.5 1.5 0 0 1 1.5-1.5h8A1.5 1.5 0 0 1 13.5 6v1.293a2.5 2.5 0 0 1 0 4.414V13a.5.5 0 0 1-.5.5H3a.5.5 0 0 1-.5-.5v-1.293a2.5 2.5 0 0 1 0-4.414V6Z"/>',
   invoice:   '<path fill-rule="evenodd" d="M4.5 2A1.5 1.5 0 0 0 3 3.5v13A1.5 1.5 0 0 0 4.5 18h11a1.5 1.5 0 0 0 1.5-1.5V7.621a1.5 1.5 0 0 0-.44-1.06l-4.12-4.122A1.5 1.5 0 0 0 11.378 2H4.5Zm2.25 8.5a.75.75 0 0 0 0 1.5h6.5a.75.75 0 0 0 0-1.5h-6.5Zm0 3a.75.75 0 0 0 0 1.5h6.5a.75.75 0 0 0 0-1.5h-6.5Zm0-6a.75.75 0 0 0 0 1.5h3a.75.75 0 0 0 0-1.5h-3Z" clip-rule="evenodd"/>',
   faq:       '<path fill-rule="evenodd" d="M18 10a8 8 0 1 1-16 0 8 8 0 0 1 16 0Zm-7-4a1 1 0 1 1-2 0 1 1 0 0 1 2 0ZM9 9a.75.75 0 0 0 0 1.5h.253a.25.25 0 0 1 .244.304l-.459 2.066A1.75 1.75 0 0 0 10.747 15H11a.75.75 0 0 0 0-1.5h-.253a.25.25 0 0 1-.244-.304l.459-2.066A1.75 1.75 0 0 0 9.253 9H9Z" clip-rule="evenodd"/>',
 }
@@ -42,36 +44,31 @@ const NAV = [
   { to: '/planning',      label: 'Planning',      icon: 'calendar', color: '#3b82f6', badge: true },
   { to: '/reservations',  label: 'Réservations',  icon: 'booking',  color: '#0ea5e9' },
   { section: 'Ventes' },
-  { to: '/clients',  label: 'Clients',                  icon: 'users',     color: '#10b981' },
+  { to: '/clients',  label: 'Clients',                  icon: 'users',     color: '#3b82f6' },
   { to: '/contacts', label: 'Contacts',                 icon: 'contact',   color: '#06b6d4' },
-  { to: '/prospects',label: 'Prospects',                icon: 'prospect',  color: '#10b981' },
+  { to: '/prospects',label: 'Prospects',                icon: 'prospect',  color: '#3b82f6' },
   { section: 'Matériel' },
   { to: '/produits',  label: 'Produits',  icon: 'produits',  color: '#f97316' },
   { to: '/articles',  label: 'Articles',  icon: 'articles',  color: '#ea580c' },
-  { to: '/gammes',    label: 'Gammes',    icon: 'gammes',    color: '#047857' },
-  { to: '/entrepots', label: 'Entrepôts', icon: 'warehouse', color: '#64748b' },
+  { to: '/gammes',        label: 'Gammes',        icon: 'gammes',    color: '#2563eb' },
+  { to: '/consommables',  label: 'Consommables',  icon: 'conso',     color: '#3b82f6' },
+  { to: '/entrepots',     label: 'Entrepôts',     icon: 'warehouse', color: '#64748b' },
   { section: 'Compta' },
-  { to: '/factures', label: 'Factures',                 icon: 'invoice',   color: '#047857' },
+  { to: '/factures', label: 'Factures',                 icon: 'invoice',   color: '#2563eb' },
   { section: 'Outils' },
-  { to: '/faq',      label: 'Transfert de compétence',  icon: 'faq',       color: '#059669' },
+  { to: '/faq',      label: 'Transfert de compétence',  icon: 'faq',       color: '#3b82f6' },
 ]
 </script>
 
 <template>
   <aside
     class="w-[220px] flex flex-col h-screen flex-shrink-0 overflow-hidden"
-    style="background: linear-gradient(180deg, #3d1a72 0%, #2d1156 100%);"
+    style="background: linear-gradient(180deg, #1c2b4b 0%, #0e1a2e 100%);"
   >
     <!-- ── Logo ── -->
     <div class="px-4 pt-5 pb-3 flex items-center gap-2.5">
-      <div class="w-9 h-9 rounded-xl flex items-center justify-center flex-shrink-0 shadow-lg"
-           style="background: linear-gradient(135deg, #059669, #047857);">
-        <span class="text-white font-black text-base leading-none">F</span>
-      </div>
-      <div class="min-w-0">
-        <div class="text-white font-bold text-sm leading-tight tracking-wide">Fiestalok</div>
-        <div class="text-emerald-300/60 text-[10px] font-medium tracking-wide mt-0.5">CRM Événementiel</div>
-      </div>
+      <img :src="logoSrc" class="h-9 object-contain" alt="Fiestalok" />
+      <div class="text-blue-300/60 text-[10px] font-medium tracking-wide">CRM Événementiel</div>
     </div>
 
     <!-- ── Search ── -->
@@ -141,7 +138,7 @@ const NAV = [
       <div class="flex items-center gap-2.5 px-2.5 py-2 rounded-xl">
         <div
           class="w-7 h-7 rounded-full flex items-center justify-center text-[11px] font-bold text-white flex-shrink-0"
-          style="background: linear-gradient(135deg, #059669, #047857);"
+          style="background: linear-gradient(135deg, #3b82f6, #2563eb);"
         >
           {{ auth.initials }}
         </div>

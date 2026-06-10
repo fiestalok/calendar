@@ -6,12 +6,13 @@ import { useReservationsStore } from '../stores/reservations'
 const store = useReservationsStore()
 const route = useRoute()
 const pendingCount = computed(() => store.pendingCount)
+const logoSrc = import.meta.env.BASE_URL + 'Logo.png'
 </script>
 
 <template>
   <header class="navbar bg-base-100 shadow-sm sticky top-0 z-50 px-4">
     <div class="flex-1">
-      <span class="text-xl font-bold text-primary">Fiestalok</span>
+      <img :src="logoSrc" class="h-8 object-contain" alt="Fiestalok" />
     </div>
     <nav class="flex-none flex items-center gap-2">
       <RouterLink

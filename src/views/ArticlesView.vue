@@ -1,23 +1,31 @@
-<script setup>
+﻿<script setup>
 import { ref, computed, watch, onMounted } from 'vue'
 import { storeToRefs } from 'pinia'
+import { useRoute } from 'vue-router'
 import { useArticlesStore } from '../stores/articles'
 import { useProduitsStore } from '../stores/produits'
 import { getReservationsByProduit } from '../api/directus'
 import AvailabilityCalendar from '../components/AvailabilityCalendar.vue'
 
+const route = useRoute()
 const articlesStore = useArticlesStore()
 const produitsStore = useProduitsStore()
 const { articles, loading, error } = storeToRefs(articlesStore)
-onMounted(() => { articlesStore.fetch(); produitsStore.fetch() })
+onMounted(async () => {
+  await Promise.all([articlesStore.fetch(), produitsStore.fetch()])
+  if (route.query.search) {
+    search.value = String(route.query.search)
+    typeFilter.value = 'all'
+  }
+})
 
 const search      = ref('')
 const etatFilter  = ref('all')
-const typeFilter  = ref('all')
+const typeFilter  = ref('principal')
 const selectedId  = ref(null)
 
 const ETAT = {
-  disponible:     { label: 'Disponible',   cls: 'bg-emerald-100 text-emerald-700', dot: 'bg-emerald-400' },
+  disponible:     { label: 'Disponible',   cls: 'bg-blue-100 text-blue-700', dot: 'bg-blue-400' },
   en_location:    { label: 'En location',  cls: 'bg-blue-100 text-blue-700',       dot: 'bg-blue-400' },
   en_maintenance: { label: 'Maintenance',  cls: 'bg-amber-100 text-amber-700',     dot: 'bg-amber-400' },
   hors_service:   { label: 'Hors service', cls: 'bg-red-100 text-red-700',         dot: 'bg-red-400' },
@@ -112,7 +120,7 @@ function formatDate(d) {
         <path fill-rule="evenodd" d="M4 4a2 2 0 0 0-2 2v1h16V6a2 2 0 0 0-2-2H4Zm-2 5v5a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9H2Zm4 3a1 1 0 0 1 1-1h2a1 1 0 1 1 0 2H7a1 1 0 0 1-1-1Z" clip-rule="evenodd"/>
       </svg>
       <h1 class="text-lg font-semibold text-gray-900">Articles</h1>
-      <span class="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full font-medium">{{ articles.length }}</span>
+      <span class="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full font-medium">{{ filtered.length }} / {{ articles.length }}</span>
       <!-- Etat summary pills -->
       <div class="flex gap-1.5 ml-2">
         <span v-for="(count, etat) in etatCounts" :key="etat"
@@ -149,7 +157,7 @@ function formatDate(d) {
           <div class="flex gap-1">
             <button class="text-[11px] px-2 py-0.5 rounded-full font-semibold transition-colors"
               :class="typeFilter === 'all' ? 'bg-gray-700 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'"
-              @click="typeFilter = 'all'">Tous types</button>
+              @click="typeFilter = 'all'">Tous</button>
             <button class="text-[11px] px-2 py-0.5 rounded-full font-semibold transition-colors"
               :class="typeFilter === 'principal' ? 'bg-orange-500 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'"
               @click="typeFilter = 'principal'">Principal</button>

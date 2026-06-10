@@ -13,6 +13,7 @@ import FacturesView from '../views/FacturesView.vue'
 import FaqView from '../views/FaqView.vue'
 import ReservationsView from '../views/ReservationsView.vue'
 import GammesView from '../views/GammesView.vue'
+import ConsommablesView from '../views/ConsommablesView.vue'
 
 const router = createRouter({
   history: createWebHistory(import.meta.env.BASE_URL),
@@ -35,7 +36,8 @@ const router = createRouter({
         { path: 'prospects',    component: ProspectsView },
         { path: 'produits',     component: ProduitsView },
         { path: 'articles',     component: ArticlesView },
-        { path: 'gammes',       component: GammesView },
+        { path: 'gammes',         component: GammesView },
+        { path: 'consommables',   component: ConsommablesView },
         { path: 'entrepots',    component: EntrepotsView },
         { path: 'factures',     component: FacturesView },
         { path: 'faq',          component: FaqView },

@@ -1,4 +1,4 @@
-<script setup>
+﻿<script setup>
 import { ref, computed, onMounted, watch } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useRoute, useRouter } from 'vue-router'
@@ -38,7 +38,7 @@ const ROLES = [
   { key: 'principal',   label: 'Principal',   cls: 'bg-blue-100 text-blue-700' },
   { key: 'secondaire',  label: 'Secondaire',  cls: 'bg-slate-100 text-slate-600' },
   { key: 'facturation', label: 'Facturation', cls: 'bg-amber-100 text-amber-700' },
-  { key: 'technique',   label: 'Technique',   cls: 'bg-emerald-100 text-emerald-700' },
+  { key: 'technique',   label: 'Technique',   cls: 'bg-blue-100 text-blue-700' },
   { key: 'autre',       label: 'Autre',       cls: 'bg-gray-100 text-gray-500' },
 ]
 const ROLE_MAP = Object.fromEntries(ROLES.map(r => [r.key, r]))
@@ -160,7 +160,7 @@ function initialsStr(str) {
   return str.split(' ').slice(0, 2).map(w => w[0]).join('').toUpperCase()
 }
 
-const AVATAR_COLORS = ['#06b6d4','#3b82f6','#059669','#10b981','#f59e0b','#f97316','#ec4899']
+const AVATAR_COLORS = ['#06b6d4','#3b82f6','#3b82f6','#3b82f6','#f59e0b','#f97316','#ec4899']
 function avatarColor(c) { return AVATAR_COLORS[c.id % AVATAR_COLORS.length] }
 
 const TABS = [{ key: 'infos', label: 'Informations' }, { key: 'notes', label: 'Notes' }]

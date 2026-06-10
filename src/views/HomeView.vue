@@ -1,4 +1,4 @@
-<script setup>
+﻿<script setup>
 import { computed, onMounted } from 'vue'
 import { useReservationsStore } from '../stores/reservations'
 
@@ -42,7 +42,7 @@ const recentReservations = computed(() =>
 const STATUS = {
   en_attente:     { label: 'En attente',    cls: 'bg-amber-100 text-amber-800' },
   devis_realise:  { label: 'Devis réalisé', cls: 'bg-blue-100 text-blue-800' },
-  devis_confirme: { label: 'Confirmé',      cls: 'bg-emerald-100 text-emerald-800' },
+  devis_confirme: { label: 'Confirmé',      cls: 'bg-blue-100 text-blue-800' },
   terminee:       { label: 'Terminée',      cls: 'bg-gray-100 text-gray-600' },
   annulee:        { label: 'Annulée',       cls: 'bg-red-100 text-red-700' },
 }
@@ -112,7 +112,7 @@ function clientName(r) {
           <div class="text-3xl font-bold text-white leading-none">
             {{ store.loading ? '…' : deliveriesThisMonth }}
           </div>
-          <div class="text-xs text-emerald-200 mt-3 font-medium uppercase tracking-wide">Livraisons planifiées</div>
+          <div class="text-xs text-blue-200 mt-3 font-medium uppercase tracking-wide">Livraisons planifiées</div>
         </div>
 
       </div>

@@ -1,4 +1,4 @@
-<script setup>
+﻿<script setup>
 import { ref, computed, watch, onMounted } from 'vue'
 import { storeToRefs } from 'pinia'
 import { useRouter } from 'vue-router'
@@ -21,7 +21,7 @@ const statutFilter = ref('all')
 const selectedId = ref(null)
 const activeTab = ref('infos')
 
-const inputCls = 'w-full text-sm px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-400 bg-white'
+const inputCls = 'w-full text-sm px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white'
 
 const STATUTS = [
   { key: 'all',          label: 'Tous' },
@@ -36,7 +36,7 @@ const STATUT_STYLE = {
   nouveau:       { cls: 'bg-blue-100 text-blue-700',       label: 'Nouveau' },
   contacte:      { cls: 'bg-cyan-100 text-cyan-700',       label: 'Contacté' },
   devis_envoye:  { cls: 'bg-amber-100 text-amber-700',     label: 'Devis envoyé' },
-  converti:      { cls: 'bg-emerald-100 text-emerald-700', label: 'Converti' },
+  converti:      { cls: 'bg-blue-100 text-blue-700', label: 'Converti' },
   perdu:         { cls: 'bg-red-100 text-red-700',         label: 'Perdu' },
 }
 
@@ -73,7 +73,7 @@ function formatDatetime(d) {
   if (!d) return '—'
   return new Date(d).toLocaleString('fr-FR', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' })
 }
-const AVATAR_COLORS = ['#10b981','#059669','#10b981','#047857','#059669','#06b6d4']
+const AVATAR_COLORS = ['#3b82f6','#3b82f6','#3b82f6','#2563eb','#3b82f6','#06b6d4']
 function avatarColor(p) { return AVATAR_COLORS[p.id % AVATAR_COLORS.length] }
 
 // ── Inline edit ───────────────────────────────────────────────────────────────
@@ -243,7 +243,7 @@ async function doDelete() {
       <h1 class="text-lg font-semibold text-gray-900">Prospects</h1>
       <span class="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full font-medium">{{ prospects.length }} prospects</span>
       <button @click="openCreate"
-        class="ml-auto inline-flex items-center gap-1.5 text-xs px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg transition-colors">
+        class="ml-auto inline-flex items-center gap-1.5 text-xs px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg transition-colors">
         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="w-3.5 h-3.5">
           <path d="M8.75 3.75a.75.75 0 0 0-1.5 0v3.5h-3.5a.75.75 0 0 0 0 1.5h3.5v3.5a.75.75 0 0 0 1.5 0v-3.5h3.5a.75.75 0 0 0 0-1.5h-3.5v-3.5Z"/>
         </svg>
@@ -263,12 +263,12 @@ async function doDelete() {
               <path stroke-linecap="round" stroke-linejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z"/>
             </svg>
             <input v-model="search" type="text" placeholder="Rechercher…"
-              class="w-full text-sm pl-8 pr-3 py-1.5 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-400 focus:border-transparent bg-gray-50"/>
+              class="w-full text-sm pl-8 pr-3 py-1.5 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400 focus:border-transparent bg-gray-50"/>
           </div>
           <div class="flex flex-wrap gap-1">
             <button v-for="s in STATUTS" :key="s.key"
               class="text-[11px] px-2 py-0.5 rounded-full font-semibold transition-colors"
-              :class="statutFilter === s.key ? 'bg-emerald-500 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'"
+              :class="statutFilter === s.key ? 'bg-blue-500 text-white' : 'bg-gray-100 text-gray-500 hover:bg-gray-200'"
               @click="statutFilter = s.key">{{ s.label }}</button>
           </div>
         </div>
@@ -278,7 +278,7 @@ async function doDelete() {
         <div v-else class="flex-1 overflow-y-auto">
           <div v-for="p in filtered" :key="p.id"
             class="flex items-center gap-3 px-3 py-3 cursor-pointer border-b border-gray-50 hover:bg-gray-50 transition-colors border-l-[3px]"
-            :class="selectedId === p.id ? 'bg-emerald-50 border-l-emerald-500' : 'border-l-transparent'"
+            :class="selectedId === p.id ? 'bg-blue-50 border-l-blue-500' : 'border-l-transparent'"
             @click="selectItem(p)">
             <div class="w-9 h-9 rounded-lg flex items-center justify-center text-xs font-bold text-white flex-shrink-0"
                  :style="{ background: avatarColor(p) }">
@@ -330,12 +330,12 @@ async function doDelete() {
               <!-- Budget KPI -->
               <div class="text-center px-4 py-2 rounded-xl flex-shrink-0" style="background:#4a148c;">
                 <div class="text-xl font-bold text-white leading-none">{{ formatCurrency(selected.budget_estime) }}</div>
-                <div class="text-[10px] text-emerald-200 mt-1 font-medium uppercase tracking-wide">Budget estimé</div>
+                <div class="text-[10px] text-blue-200 mt-1 font-medium uppercase tracking-wide">Budget estimé</div>
               </div>
               <!-- Actions -->
               <div class="flex gap-2 flex-shrink-0 flex-wrap justify-end">
                 <button v-if="selected.statut !== 'converti'" @click="convertModal = true"
-                  class="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold rounded-lg transition-colors">
+                  class="inline-flex items-center gap-1.5 text-xs px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg transition-colors">
                   <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="w-3.5 h-3.5">
                     <path d="M8 1a7 7 0 1 0 0 14A7 7 0 0 0 8 1Zm3.78 5.78a.75.75 0 0 0-1.06-1.06L7 9.44 5.28 7.72a.75.75 0 0 0-1.06 1.06l2.25 2.25a.75.75 0 0 0 1.06 0l4.25-4.25Z"/>
                   </svg>
@@ -357,7 +357,7 @@ async function doDelete() {
             <div class="flex">
               <button v-for="t in [{ key: 'infos', label: 'Informations' }, { key: 'notes', label: 'Notes' }]" :key="t.key"
                 class="px-5 py-3 text-[13px] font-semibold border-b-2 transition-colors -mb-px uppercase tracking-wide"
-                :class="activeTab === t.key ? 'border-emerald-500 text-emerald-600' : 'border-transparent text-gray-400 hover:text-gray-600'"
+                :class="activeTab === t.key ? 'border-blue-500 text-blue-600' : 'border-transparent text-gray-400 hover:text-gray-600'"
                 @click="activeTab = t.key">{{ t.label }}</button>
             </div>
           </div>
@@ -367,11 +367,11 @@ async function doDelete() {
 
             <!-- ── Informations tab ── -->
             <template v-if="activeTab === 'infos'">
-              <div class="bg-white rounded-xl shadow-sm overflow-hidden" :class="inlineEditing ? 'ring-2 ring-emerald-400' : ''">
+              <div class="bg-white rounded-xl shadow-sm overflow-hidden" :class="inlineEditing ? 'ring-2 ring-blue-400' : ''">
                 <div class="px-5 py-3 border-b flex items-center gap-2"
-                  :class="inlineEditing ? 'border-emerald-100 bg-emerald-50' : 'border-gray-100'">
+                  :class="inlineEditing ? 'border-blue-100 bg-blue-50' : 'border-gray-100'">
                   <span class="text-[#e65100]">▲</span>
-                  <span class="text-sm font-semibold flex-1" :class="inlineEditing ? 'text-emerald-700' : 'text-gray-700'">Informations</span>
+                  <span class="text-sm font-semibold flex-1" :class="inlineEditing ? 'text-blue-700' : 'text-gray-700'">Informations</span>
                   <button v-if="!inlineEditing" @click="startInlineEdit"
                     class="inline-flex items-center gap-1 text-xs px-2.5 py-1 border border-gray-200 rounded-lg text-gray-500 hover:bg-gray-50 transition-colors">
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="w-3 h-3">
@@ -380,7 +380,7 @@ async function doDelete() {
                     </svg>
                     Modifier
                   </button>
-                  <span v-else class="inline-flex items-center gap-1 text-xs px-2.5 py-1 bg-emerald-50 text-emerald-600 font-semibold rounded-lg border border-emerald-200">
+                  <span v-else class="inline-flex items-center gap-1 text-xs px-2.5 py-1 bg-blue-50 text-blue-600 font-semibold rounded-lg border border-blue-200">
                     ✎ En cours
                   </span>
                 </div>
@@ -403,7 +403,7 @@ async function doDelete() {
                   </div>
                   <div>
                     <div class="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-1">Email</div>
-                    <a :href="`mailto:${selected.email}`" class="text-emerald-600 hover:underline text-sm">{{ selected.email || '—' }}</a>
+                    <a :href="`mailto:${selected.email}`" class="text-blue-600 hover:underline text-sm">{{ selected.email || '—' }}</a>
                   </div>
                   <div>
                     <div class="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-1">Téléphone</div>
@@ -427,7 +427,7 @@ async function doDelete() {
                   </div>
                   <div class="col-span-2">
                     <div class="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-1">Événement</div>
-                    <div class="text-gray-900 bg-emerald-50 border border-emerald-100 rounded-lg px-4 py-3 text-sm">{{ selected.evenement || '—' }}</div>
+                    <div class="text-gray-900 bg-blue-50 border border-blue-100 rounded-lg px-4 py-3 text-sm">{{ selected.evenement || '—' }}</div>
                   </div>
                   <div>
                     <div class="text-[11px] font-semibold text-gray-400 uppercase tracking-wider mb-1">Créé le</div>
@@ -443,7 +443,7 @@ async function doDelete() {
                       <button v-for="t in ['particulier','entreprise']" :key="t"
                         @click="inlineDraft.type = t"
                         class="flex-1 py-2 rounded-lg text-sm font-semibold border transition-colors"
-                        :class="inlineDraft.type === t ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'">
+                        :class="inlineDraft.type === t ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'">
                         {{ t.charAt(0).toUpperCase() + t.slice(1) }}
                       </button>
                     </div>
@@ -510,7 +510,7 @@ async function doDelete() {
 
                   <div class="flex gap-3 pt-2">
                     <button @click="saveInlineEdit" :disabled="inlineSaving"
-                      class="flex-1 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-sm font-semibold rounded-lg transition-colors">
+                      class="flex-1 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-semibold rounded-lg transition-colors">
                       {{ inlineSaving ? 'Enregistrement…' : 'Sauvegarder' }}
                     </button>
                     <button @click="cancelInlineEdit"
@@ -531,7 +531,7 @@ async function doDelete() {
                   <div class="ml-auto flex gap-1">
                     <button v-for="sub in [{ key: 'note', label: 'Note' }, { key: 'historique', label: 'Historique' }]" :key="sub.key"
                       class="text-[11px] px-2.5 py-1 rounded-md font-semibold transition-colors"
-                      :class="notesSubTab === sub.key ? 'bg-emerald-100 text-emerald-700' : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'"
+                      :class="notesSubTab === sub.key ? 'bg-blue-100 text-blue-700' : 'text-gray-400 hover:text-gray-600 hover:bg-gray-100'"
                       @click="notesSubTab = sub.key">{{ sub.label }}</button>
                   </div>
                 </div>
@@ -552,10 +552,10 @@ async function doDelete() {
                   </div>
                   <div v-else class="space-y-3">
                     <textarea v-model="notesText" rows="6" placeholder="Saisir une note…"
-                      class="w-full text-sm px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-400 resize-none"/>
+                      class="w-full text-sm px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400 resize-none"/>
                     <div class="flex gap-3">
                       <button @click="saveNotes" :disabled="notesSaving"
-                        class="flex-1 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-sm font-semibold rounded-lg transition-colors">
+                        class="flex-1 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-semibold rounded-lg transition-colors">
                         {{ notesSaving ? 'Enregistrement…' : 'Sauvegarder' }}
                       </button>
                       <button @click="cancelNotes"
@@ -572,7 +572,7 @@ async function doDelete() {
                   <div v-else class="space-y-3">
                     <div v-for="entry in [...notesHistory].reverse()" :key="entry.id"
                       class="flex gap-3 p-3 bg-gray-50 rounded-lg border border-gray-100">
-                      <div class="w-7 h-7 rounded-full bg-emerald-100 text-emerald-700 flex items-center justify-center text-[11px] font-bold flex-shrink-0 uppercase">
+                      <div class="w-7 h-7 rounded-full bg-blue-100 text-blue-700 flex items-center justify-center text-[11px] font-bold flex-shrink-0 uppercase">
                         {{ entry.author?.[0] ?? '?' }}
                       </div>
                       <div class="flex-1 min-w-0">
@@ -600,9 +600,9 @@ async function doDelete() {
           <div class="absolute inset-0 bg-black/30" @click="closeDrawer"/>
           <div class="relative w-[420px] bg-white h-full flex flex-col shadow-2xl">
 
-            <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between bg-emerald-600">
+            <div class="px-6 py-4 border-b border-gray-100 flex items-center justify-between bg-blue-600">
               <h2 class="text-base font-semibold text-white">Nouveau prospect</h2>
-              <button @click="closeDrawer" class="text-emerald-200 hover:text-white transition-colors">
+              <button @click="closeDrawer" class="text-blue-200 hover:text-white transition-colors">
                 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="w-5 h-5">
                   <path d="M6.28 5.22a.75.75 0 0 0-1.06 1.06L8.94 10l-3.72 3.72a.75.75 0 1 0 1.06 1.06L10 11.06l3.72 3.72a.75.75 0 1 0 1.06-1.06L11.06 10l3.72-3.72a.75.75 0 0 0-1.06-1.06L10 8.94 6.28 5.22Z"/>
                 </svg>
@@ -617,7 +617,7 @@ async function doDelete() {
                   <button v-for="t in ['particulier','entreprise']" :key="t"
                     @click="form.type = t"
                     class="flex-1 py-2 rounded-lg text-sm font-semibold border transition-colors"
-                    :class="form.type === t ? 'bg-emerald-600 text-white border-emerald-600' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'">
+                    :class="form.type === t ? 'bg-blue-600 text-white border-blue-600' : 'bg-white text-gray-600 border-gray-200 hover:bg-gray-50'">
                     {{ t.charAt(0).toUpperCase() + t.slice(1) }}
                   </button>
                 </div>
@@ -628,12 +628,12 @@ async function doDelete() {
                   <div>
                     <label class="text-[11px] font-semibold text-gray-500 uppercase tracking-wide block mb-1">Prénom</label>
                     <input v-model="form.prenom" type="text" placeholder="Jean"
-                      class="w-full text-sm px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-400"/>
+                      class="w-full text-sm px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400"/>
                   </div>
                   <div>
                     <label class="text-[11px] font-semibold text-gray-500 uppercase tracking-wide block mb-1">Nom</label>
                     <input v-model="form.nom" type="text" placeholder="Dupont"
-                      class="w-full text-sm px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-400"/>
+                      class="w-full text-sm px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400"/>
                   </div>
                 </div>
               </template>
@@ -641,7 +641,7 @@ async function doDelete() {
                 <div>
                   <label class="text-[11px] font-semibold text-gray-500 uppercase tracking-wide block mb-1">Raison sociale</label>
                   <input v-model="form.raison_sociale" type="text" placeholder="Acme SAS"
-                    class="w-full text-sm px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-400"/>
+                    class="w-full text-sm px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400"/>
                 </div>
               </template>
 
@@ -649,33 +649,33 @@ async function doDelete() {
                 <div>
                   <label class="text-[11px] font-semibold text-gray-500 uppercase tracking-wide block mb-1">Email</label>
                   <input v-model="form.email" type="email" placeholder="jean@example.com"
-                    class="w-full text-sm px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-400"/>
+                    class="w-full text-sm px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400"/>
                 </div>
                 <div>
                   <label class="text-[11px] font-semibold text-gray-500 uppercase tracking-wide block mb-1">Téléphone</label>
                   <input v-model="form.telephone" type="tel" placeholder="06 00 00 00 00"
-                    class="w-full text-sm px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-400"/>
+                    class="w-full text-sm px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400"/>
                 </div>
               </div>
 
               <div>
                 <label class="text-[11px] font-semibold text-gray-500 uppercase tracking-wide block mb-1">Ville</label>
                 <input v-model="form.ville" type="text" placeholder="Paris"
-                  class="w-full text-sm px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-400"/>
+                  class="w-full text-sm px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400"/>
               </div>
 
               <div class="grid grid-cols-2 gap-3">
                 <div>
                   <label class="text-[11px] font-semibold text-gray-500 uppercase tracking-wide block mb-1">Statut</label>
                   <select v-model="form.statut"
-                    class="w-full text-sm px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-400 bg-white">
+                    class="w-full text-sm px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white">
                     <option v-for="s in STATUTS.slice(1)" :key="s.key" :value="s.key">{{ s.label }}</option>
                   </select>
                 </div>
                 <div>
                   <label class="text-[11px] font-semibold text-gray-500 uppercase tracking-wide block mb-1">Budget estimé (€)</label>
                   <input v-model="form.budget_estime" type="number" min="0" placeholder="5000"
-                    class="w-full text-sm px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-400"/>
+                    class="w-full text-sm px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400"/>
                 </div>
               </div>
 
@@ -683,26 +683,26 @@ async function doDelete() {
                 <div>
                   <label class="text-[11px] font-semibold text-gray-500 uppercase tracking-wide block mb-1">Origine</label>
                   <input v-model="form.origine" type="text" placeholder="Recommandation, web…"
-                    class="w-full text-sm px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-400"/>
+                    class="w-full text-sm px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400"/>
                 </div>
                 <div>
                   <label class="text-[11px] font-semibold text-gray-500 uppercase tracking-wide block mb-1">Événement</label>
                   <input v-model="form.evenement" type="text" placeholder="Mariage, anniversaire…"
-                    class="w-full text-sm px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-400"/>
+                    class="w-full text-sm px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400"/>
                 </div>
               </div>
 
               <div>
                 <label class="text-[11px] font-semibold text-gray-500 uppercase tracking-wide block mb-1">Notes</label>
                 <textarea v-model="form.notes" rows="4" placeholder="Informations complémentaires…"
-                  class="w-full text-sm px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-emerald-400 resize-none"/>
+                  class="w-full text-sm px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400 resize-none"/>
               </div>
 
             </div>
 
             <div class="px-6 py-4 border-t border-gray-100 flex gap-3">
               <button @click="submitDrawer" :disabled="drawerSaving"
-                class="flex-1 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-sm font-semibold rounded-lg transition-colors">
+                class="flex-1 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-semibold rounded-lg transition-colors">
                 {{ drawerSaving ? 'Enregistrement…' : 'Créer' }}
               </button>
               <button @click="closeDrawer"
@@ -721,8 +721,8 @@ async function doDelete() {
         <div class="absolute inset-0 bg-black/40" @click="convertModal = false"/>
         <div class="relative bg-white rounded-2xl shadow-xl p-6 w-96">
           <div class="flex items-center gap-3 mb-3">
-            <div class="w-10 h-10 rounded-xl bg-emerald-100 flex items-center justify-center flex-shrink-0">
-              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="w-5 h-5 text-emerald-600">
+            <div class="w-10 h-10 rounded-xl bg-blue-100 flex items-center justify-center flex-shrink-0">
+              <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="w-5 h-5 text-blue-600">
                 <path fill-rule="evenodd" d="M10 18a8 8 0 1 0 0-16 8 8 0 0 0 0 16Zm3.857-9.809a.75.75 0 0 0-1.214-.882l-3.483 4.79-1.88-1.88a.75.75 0 1 0-1.06 1.061l2.5 2.5a.75.75 0 0 0 1.137-.089l4-5.5Z" clip-rule="evenodd"/>
               </svg>
             </div>
@@ -736,7 +736,7 @@ async function doDelete() {
           </p>
           <div class="flex gap-3">
             <button @click="doConvert" :disabled="convertRunning"
-              class="flex-1 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-sm font-semibold rounded-lg transition-colors">
+              class="flex-1 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-sm font-semibold rounded-lg transition-colors">
               {{ convertRunning ? 'Conversion…' : 'Confirmer' }}
             </button>
             <button @click="convertModal = false"
