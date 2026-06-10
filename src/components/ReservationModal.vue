@@ -409,26 +409,38 @@ async function generateDevis() {
   try {
     const logoImg = await new Promise((resolve, reject) => {
       const img = new Image()
-      img.onload = () => resolve(img)
+      img.onload = () => {
+        const canvas = document.createElement('canvas')
+        canvas.width  = img.naturalWidth
+        canvas.height = img.naturalHeight
+        const ctx = canvas.getContext('2d')
+        ctx.fillStyle = '#155264'
+        ctx.fillRect(0, 0, canvas.width, canvas.height)
+        ctx.drawImage(img, 0, 0)
+        resolve(canvas.toDataURL('image/png'))
+      }
       img.onerror = reject
       img.src = import.meta.env.BASE_URL + 'Logo.png'
     })
 
     const { jsPDF } = await import('jspdf')
     const doc = new jsPDF({ unit: 'mm', format: 'a4' })
+
+    const FONT = 'helvetica'
     const r   = props.reservation
     const c   = client.value
     const now = format(new Date(), 'dd/MM/yyyy')
     const W = 210, M = 10, INNER = 190, pageH = 297, TVA = 0.20
-    const FOOTER_H = 18, USABLE = pageH - FOOTER_H - 4
+    const FOOTER_H = 22, USABLE = pageH - FOOTER_H - 4
 
-    const TEAL  = [0, 84, 115]
-    const LTEAL = [220, 238, 248]
-    const MGREY = [240, 240, 242]
-    const LGREY = [200, 200, 205]
-    const DGREY = [100, 100, 110]
-    const BLACK = [20, 20, 30]
-    const WHITE = [255, 255, 255]
+    const TEAL     = [21, 82, 100]
+    const CARD_BG  = [226, 234, 240]
+    const CARD_TOP = [247, 251, 255]
+    const CBORD    = [196, 210, 222]
+    const LGREY  = [200, 200, 205]
+    const DGREY  = [100, 100, 110]
+    const BLACK  = [60, 65, 75]
+    const WHITE  = [255, 255, 255]
 
     let y = 0
     const addPage   = () => { doc.addPage(); y = 14 }
@@ -438,143 +450,136 @@ async function generateDevis() {
     // ── Helpers ───────────────────────────────────────────────────────────────
     let sectionNum = 0
     const sectionHeader = (title) => {
-      checkPage(10); y += 4
+      checkPage(10); y += 1
       sectionNum++
-      doc.setFillColor(...TEAL); doc.rect(M, y, INNER, 7, 'F')
-      doc.setFontSize(8.5); doc.setFont('helvetica', 'bold'); setColor(WHITE)
-      doc.text(`${sectionNum}. ${title.toUpperCase()}`, M + 4, y + 5)
-      y += 10
+      doc.setFillColor(...TEAL)
+      doc.roundedRect(M, y, INNER, 8, 2, 2, 'F')
+      doc.rect(M, y + 6, INNER, 2, 'F')
+      doc.setFontSize(11); doc.setFont(FONT, 'bold'); setColor(WHITE)
+      doc.text(`${sectionNum}. ${title.toUpperCase()}`, M + 4, y + 5.5)
+      y += 8
     }
 
     const drawTable = (cols, rows) => {
-      const headerH = 6.5
+      const PAD_H = 2, headerH = PAD_H * 2 + 3
       checkPage(headerH + 6)
-      doc.setFillColor(...LTEAL); doc.rect(M, y, INNER, headerH, 'F')
-      doc.setFontSize(7.5); doc.setFont('helvetica', 'bold'); setColor(TEAL)
+      doc.setFillColor(...CARD_BG); doc.rect(M, y, INNER, headerH, 'F')
+      doc.setFontSize(8.5); doc.setFont(FONT, 'bold'); setColor(TEAL)
       for (const col of cols) {
         const align = col.align ?? 'left'
-        doc.text(col.label, align === 'right' ? col.x + col.w - 2 : col.x + 2, y + 4.5, { align })
+        doc.text(col.label, align === 'right' ? col.x + col.w - 2 : col.x + 2, y + PAD_H + 2, { align })
       }
       y += headerH
-      let odd = false
-      for (const row of rows) {
-        const cells = row.cells ?? row
-        const sub   = row.subtitle ?? null
-        const rowH  = sub ? 10 : 6
+      for (let ri = 0; ri < rows.length; ri++) {
+        const row    = rows[ri]
+        const isLast = ri === rows.length - 1
+        const cells  = row.cells ?? row
+        const sub    = row.subtitle ?? null
+        const rowH   = sub ? 12 : 8
         checkPage(rowH + 2)
-        if (odd) { doc.setFillColor(...MGREY); doc.rect(M, y, INNER, rowH, 'F') }
-        odd = !odd
-        doc.setDrawColor(...LGREY); doc.setLineWidth(0.1)
+        doc.setFillColor(248, 250, 252)
+        if (isLast) {
+          doc.roundedRect(M, y, INNER, rowH, 2, 2, 'F')
+          doc.rect(M, y, INNER, 2, 'F')
+        } else {
+          doc.rect(M, y, INNER, rowH, 'F')
+        }
+        doc.setDrawColor(...LGREY); doc.setLineWidth(0.15)
         doc.line(M, y + rowH, M + INNER, y + rowH)
-        doc.setFontSize(8); doc.setFont('helvetica', 'normal'); setColor(BLACK)
+        doc.setFontSize(10); doc.setFont(FONT, 'normal')
         for (let i = 0; i < cols.length; i++) {
           const col = cols[i]; const cell = String(cells[i] ?? '—')
           const align = col.align ?? 'left'
           const tx = align === 'right' ? col.x + col.w - 2 : col.x + 2
-          doc.text((doc.splitTextToSize(cell, col.w - 4)[0] ?? cell), tx, sub ? y + 4 : y + 4.5, { align })
+          setColor(cell.startsWith('-') && col.align === 'right' ? [214, 54, 59] : BLACK)
+          doc.text((doc.splitTextToSize(cell, col.w - 4)[0] ?? cell), tx, sub ? y + 5 : y + 5.5, { align })
         }
-        if (sub) { doc.setFontSize(7); doc.setFont('helvetica', 'italic'); setColor(DGREY); doc.text(sub, cols[0].x + 2, y + 8.5) }
+        if (sub) { doc.setFontSize(9); doc.setFont(FONT, 'italic'); setColor(DGREY); doc.text(sub, cols[0].x + 2, y + 10) }
         y += rowH
       }
-      doc.setDrawColor(...LGREY); doc.line(M, y, M + INNER, y)
-      y += 4
+      y += 3
     }
 
     const drawCardHeader = (bx, bW, label) => {
-      doc.setFillColor(...LTEAL)
-      doc.roundedRect(bx, y, bW, 6, 1.5, 1.5, 'F')
-      doc.rect(bx, y + 3, bW, 3, 'F')
-      doc.setFontSize(7); doc.setFont('helvetica', 'bold'); setColor(TEAL)
-      doc.text(label, bx + 3, y + 4.2)
+      doc.setFontSize(9); doc.setFont(FONT, 'bold'); setColor(TEAL)
+      doc.text(label, bx + 5, y + 5.5)
     }
 
     // ── HEADER BAND (28mm) ────────────────────────────────────────────────────
-    const HEADER_H = 28
+    const HEADER_H = 32
+    const logoW = 50, logoH = 26
     doc.setFillColor(...TEAL); doc.rect(0, 0, W, HEADER_H, 'F')
-    doc.addImage(logoImg, 'PNG', M + 2, 4, 44, 18)
-    doc.setFontSize(9); doc.setFont('helvetica', 'normal'); setColor([190, 220, 235])
-    doc.text('Location de matériel festif', M + 2, HEADER_H - 4)
-    doc.setFontSize(22); doc.setFont('helvetica', 'bold'); setColor(WHITE)
-    doc.text('DEVIS', W - M, 18, { align: 'right' })
-    doc.setFontSize(8); doc.setFont('helvetica', 'normal'); setColor([190, 220, 235])
-    doc.text(`N° ${r.id}`, W - M, 24, { align: 'right' })
-    doc.text(`Émis le ${now}`, W - M, HEADER_H - 2, { align: 'right' })
-    y = HEADER_H + 6
+    doc.addImage(logoImg, 'PNG', M, 0, logoW, logoH)
+    doc.setFontSize(22); doc.setFont(FONT, 'bold'); setColor(WHITE)
+    doc.text('DEVIS', W - M, 16, { align: 'right' })
+    doc.setFontSize(8); doc.setFont(FONT, 'normal'); setColor([190, 220, 235])
+    doc.text(`N° ${r.id}  •  Émis le ${now}`, W - M, 23, { align: 'right' })
+    y = HEADER_H + 5
 
     // ── INFO : 3 cards (CLIENT | PÉRIODE | LOGISTIQUE) ───────────────────────
     const GAP = 6
-    const cW_c = 85, cW_p = 44, cW_l = INNER - cW_c - cW_p - GAP * 2
+    const cW_c = 58, cW_p = 52, cW_l = INNER - cW_c - cW_p - GAP * 2
     const x_p  = M + cW_c + GAP
     const x_l  = x_p + cW_p + GAP
 
     const fullName = `${c?.first_name ?? ''} ${c?.last_name ?? ''}`.trim()
     const cLines = [
-      c?.company_name ? { t: c.company_name, bold: true,  sz: 9 }   : null,
-      fullName        ? { t: fullName, bold: !c?.company_name, sz: 8.5 } : null,
-      c?.phone        ? { t: c.phone,  bold: false, sz: 8 }   : null,
-      c?.email        ? { t: c.email,  bold: false, sz: 7.5 } : null,
-      (c?.zip_code || c?.city) ? { t: [c?.zip_code, c?.city].filter(Boolean).join(' '), bold: false, sz: 8 } : null,
+      c?.company_name ? { t: c.company_name, bold: true,  sz: 10 } : null,
+      fullName        ? { t: fullName, bold: !c?.company_name, sz: 9.5 } : null,
+      c?.phone        ? { t: c.phone,  bold: false, sz: 9 } : null,
+      c?.email        ? { t: c.email,  bold: false, sz: 8.5 }   : null,
+      (c?.zip_code || c?.city) ? { t: [c?.zip_code, c?.city].filter(Boolean).join(' '), bold: false, sz: 9 } : null,
     ].filter(Boolean)
-    const cardH = Math.max(32, 10 + cLines.length * 5)
+    const PAD  = 5
+    const cardH = Math.max(28, 9 + cLines.length * 5.5 + 3)
 
     // CLIENT card
-    doc.setFillColor(...MGREY); doc.setDrawColor(...LGREY); doc.setLineWidth(0.3)
+    doc.setFillColor(...CARD_TOP); doc.setDrawColor(...CBORD); doc.setLineWidth(0.25)
     doc.roundedRect(M, y, cW_c, cardH, 1.5, 1.5, 'FD')
     drawCardHeader(M, cW_c, 'CLIENT')
-    let cy = y + 11
+    let cy = y + 12
     for (const l of cLines) {
-      doc.setFontSize(l.sz); doc.setFont('helvetica', l.bold ? 'bold' : 'normal'); setColor(BLACK)
-      doc.text(l.t, M + 3, cy); cy += 5
+      doc.setFontSize(l.sz); doc.setFont(FONT, 'normal'); setColor(BLACK)
+      doc.text(l.t, M + PAD, cy); cy += 5
     }
 
     // PÉRIODE card
-    doc.setFillColor(...MGREY); doc.setDrawColor(...LGREY)
+    doc.setFillColor(...CARD_TOP); doc.setDrawColor(...CBORD)
     doc.roundedRect(x_p, y, cW_p, cardH, 1.5, 1.5, 'FD')
     drawCardHeader(x_p, cW_p, 'PÉRIODE')
-    doc.setFontSize(8); doc.setFont('helvetica', 'bold'); setColor(BLACK)
-    doc.text('Début :', x_p + 3, y + 11)
-    doc.setFont('helvetica', 'normal')
-    doc.text(fmtDateLong(r.date_start), x_p + 3, y + 16)
-    doc.setFont('helvetica', 'bold')
-    doc.text('Fin :', x_p + 3, y + 22)
-    doc.setFont('helvetica', 'normal')
-    doc.text(fmtDateLong(r.date_end), x_p + 3, y + 27)
+    doc.setFontSize(9); doc.setFont(FONT, 'normal'); setColor(BLACK)
+    doc.text('Début :', x_p + PAD, y + 12)
+    doc.text(fmtDateLong(r.date_start), x_p + PAD, y + 17)
+    doc.text('Fin :', x_p + PAD, y + 23)
+    doc.text(fmtDateLong(r.date_end), x_p + PAD, y + 28)
 
     // LOGISTIQUE card
-    doc.setFillColor(...MGREY); doc.setDrawColor(...LGREY)
+    doc.setFillColor(...CARD_TOP); doc.setDrawColor(...CBORD)
     doc.roundedRect(x_l, y, cW_l, cardH, 1.5, 1.5, 'FD')
     drawCardHeader(x_l, cW_l, 'LOGISTIQUE')
-    let ly = y + 11
+    let ly = y + 12
+    doc.setFontSize(9); doc.setFont(FONT, 'normal'); setColor(BLACK)
+    doc.text(`Livraison : ${livraison.value ? 'Oui' : 'Non'}`, x_l + PAD, ly); ly += 5
     if (livraison.value) {
-      const zone = distanceKm.value <= 15 ? '0–15 km' : distanceKm.value <= 30 ? '15–30 km'
-                 : distanceKm.value <= 50 ? '30–50 km' : distanceKm.value <= 80 ? '50–80 km'
-                 : distanceKm.value <= 120 ? '80–120 km' : '> 120 km'
-      doc.setFontSize(7.5); doc.setFont('helvetica', 'bold'); setColor(TEAL)
-      doc.text('Livraison & installation', x_l + 3, ly); ly += 5
-      doc.setFont('helvetica', 'normal'); setColor(BLACK)
-      doc.text(`Forfait ${zone}`, x_l + 3, ly); ly += 5
-    } else {
-      doc.setFontSize(7.5); doc.setFont('helvetica', 'italic'); setColor(DGREY)
-      doc.text('Livraison : non', x_l + 3, ly); ly += 5
+      doc.text('Installation : Oui', x_l + PAD, ly); ly += 5
     }
     if (r.delivery_address) {
-      doc.setFontSize(7); doc.setFont('helvetica', 'bold'); setColor(TEAL)
-      doc.text('Lieu :', x_l + 3, ly); ly += 4
-      doc.setFont('helvetica', 'normal'); setColor(DGREY)
-      for (const al of r.delivery_address.split('\n').map(l => l.trim()).filter(Boolean).slice(0, 2)) {
-        doc.text(al, x_l + 3, ly); ly += 3.5
-      }
+      const addrParts = r.delivery_address.split('\n').map(l => l.trim()).filter(Boolean)
+      const addrText  = `Lieu : ${addrParts[0] ?? ''}`
+      const addrLines = doc.splitTextToSize(addrText, cW_l - PAD * 2)
+      doc.text(addrLines.slice(0, 2), x_l + PAD, ly)
+      ly += addrLines.slice(0, 2).length * 5
     }
-    y += cardH + 6
+    y += cardH + 3
 
     // ── 1. PRODUITS ───────────────────────────────────────────────────────────
     sectionHeader('Produits réservés')
     drawTable([
-      { label: 'Désignation', x: M,       w: 88 },
-      { label: 'Qté',         x: M + 88,  w: 14, align: 'right' },
-      { label: 'P.U. HT',    x: M + 102, w: 29, align: 'right' },
-      { label: 'P.U. TTC',   x: M + 131, w: 29, align: 'right' },
-      { label: 'Total TTC',  x: M + 160, w: 30, align: 'right' },
+      { label: 'Produit',           x: M,       w: 65 },
+      { label: 'Qté',               x: M + 65,  w: 15, align: 'right' },
+      { label: 'Prix unitaire HT',  x: M + 80,  w: 37, align: 'right' },
+      { label: 'Prix unitaire TTC', x: M + 117, w: 37, align: 'right' },
+      { label: 'Sous-total TTC',    x: M + 154, w: 36, align: 'right' },
     ], produits.value.map(p => {
       const qty = p.quantity ?? 1
       const ttc = p.unit_price ? Number(p.unit_price) : (p.produits_id?.prix_location ? Number(p.produits_id.prix_location) : null)
@@ -583,23 +588,22 @@ async function generateDevis() {
       return [p.produits_id?.name ?? '—', qty, ht != null ? `${ht.toFixed(2)} €` : '—', ttc != null ? `${ttc.toFixed(2)} €` : '—', st != null ? `${st.toFixed(2)} €` : '—']
     }))
 
-    // ── 2. LIVRAISON & INSTALLATION ───────────────────────────────────────────
+    // ── 2. LIVRAISON ET INSTALLATION ─────────────────────────────────────────
     if (livraison.value) {
-      sectionHeader('Livraison & Installation')
-      const fee  = livraisonMontant.value
-      const zone = distanceKm.value <= 15 ? '0–15 km' : distanceKm.value <= 30 ? '15–30 km'
-                 : distanceKm.value <= 50 ? '30–50 km' : distanceKm.value <= 80 ? '50–80 km'
-                 : distanceKm.value <= 120 ? '80–120 km' : '> 120 km'
+      sectionHeader('Livraison et Installation')
+      const fee   = livraisonMontant.value
+      const feeHT = fee / 1.2
+      const zone  = distanceKm.value <= 15 ? '0–15 km' : distanceKm.value <= 30 ? '15–30 km'
+                  : distanceKm.value <= 50 ? '30–50 km' : distanceKm.value <= 80 ? '50–80 km'
+                  : distanceKm.value <= 120 ? '80–120 km' : '> 120 km'
       drawTable([
-        { label: 'Prestation',  x: M,       w: 120 },
-        { label: 'Forfait',     x: M + 120, w: 30, align: 'right' },
-        { label: 'Montant TTC', x: M + 150, w: 40, align: 'right' },
-      ], [['Livraison, installation & déinstallation', zone, `${fee.toFixed(2)} €`]])
+        { label: 'Zone',      x: M,       w: 120 },
+        { label: 'Tarif HT',  x: M + 120, w: 35, align: 'right' },
+        { label: 'Tarif TTC', x: M + 155, w: 35, align: 'right' },
+      ], [{ cells: [`Forfait ${zone}`, `${feeHT.toFixed(2)} €`, `${fee.toFixed(2)} €`], subtitle: 'Livraison, installation & déinstallation incluses' }])
     }
 
-    // ── 3. RÉCAPITULATIF FINANCIER ────────────────────────────────────────────
-    sectionHeader('Récapitulatif financier')
-
+    // ── Calculs financiers ────────────────────────────────────────────────────
     let soustotalTTC = produits.value.reduce((acc, p) => {
       const qty = p.quantity ?? 1
       const ttc = p.unit_price ? Number(p.unit_price) : (p.produits_id?.prix_location ? Number(p.produits_id.prix_location) : 0)
@@ -609,50 +613,67 @@ async function generateDevis() {
     const remiseTTC = remiseMontantTTC.value
     const totalTTC  = soustotalTTC - remiseTTC
     const totalHT   = totalTTC / 1.2
-    const soustHT   = soustotalTTC / 1.2
     const remiseHT  = remiseTTC / 1.2
     const tvaAmt    = totalTTC - totalHT
 
-    checkPage(52)
-    const sumX = W - M - 80, sumW = 80
+    // ── 3. REMISE CONNAISSANCE ────────────────────────────────────────────────
+    if (remiseTTC > 0) {
+      sectionHeader('Remise Connaissance')
+      drawTable([
+        { label: 'Description', x: M,       w: 120 },
+        { label: 'Montant HT',  x: M + 120, w: 35, align: 'right' },
+        { label: 'Montant TTC', x: M + 155, w: 35, align: 'right' },
+      ], [[remiseDescription.value, `-${remiseHT.toFixed(2)} €`, `-${remiseTTC.toFixed(2)} €`]])
+    }
+
+    // ── RÉCAPITULATIF ─────────────────────────────────────────────────────────
+    y += 8
+    checkPage(60)
+    const RED  = [214, 54, 59]
+    const sumX = W - M - 90, sumW = 90
     const summaryRows = [
-      ['Sous-total HT', `${soustHT.toFixed(2)} €`, false],
-      ...(remiseTTC > 0 ? [['Remise (HT)', `−${remiseHT.toFixed(2)} €`, false]] : []),
-      ['Total HT',  `${totalHT.toFixed(2)} €`, false],
-      ['TVA 20 %',  `${tvaAmt.toFixed(2)} €`,  false],
-      ['TOTAL TTC', `${totalTTC.toFixed(2)} €`, true ],
+      ['Prix initial TTC', `${soustotalTTC.toFixed(2)} €`, 'normal'],
+      ...(remiseTTC > 0 ? [['Remise', `-${remiseTTC.toFixed(2)} €`, 'remise']] : []),
+      ['À payer (TTC)',    `${totalTTC.toFixed(2)} €`,     'bold'  ],
+      ['dont TVA 20 %',   `${tvaAmt.toFixed(2)} €`,       'light' ],
+      ['Total HT',        `${totalHT.toFixed(2)} €`,      'light' ],
     ]
-    for (const [label, val, bold] of summaryRows) {
-      const rH = bold ? 9 : 6.5
-      if (bold) {
+    const rowHFor = (t) => t === 'bold' ? 11 : t === 'light' ? 5.5 : 8
+    const totalSumH = summaryRows.reduce((h, [,, t]) => h + rowHFor(t) + 0.5, 0)
+    const sumStartY = y
+    for (const [label, val, type] of summaryRows) {
+      const rH = rowHFor(type)
+      if (type === 'bold') {
         doc.setFillColor(...TEAL); doc.rect(sumX, y, sumW, rH, 'F')
-        doc.setFontSize(10); doc.setFont('helvetica', 'bold'); setColor(WHITE)
+        doc.setFontSize(11); doc.setFont(FONT, 'bold'); setColor(WHITE)
+      } else if (type === 'light') {
+        doc.setFillColor(250, 250, 252); doc.rect(sumX, y, sumW, rH, 'F')
+        doc.setDrawColor(...LGREY); doc.setLineWidth(0.1); doc.line(sumX, y + rH, sumX + sumW, y + rH)
+        doc.setFontSize(8); doc.setFont(FONT, 'normal'); setColor(DGREY)
+      } else if (type === 'remise') {
+        doc.setFillColor(255, 255, 255); doc.rect(sumX, y, sumW, rH, 'F')
+        doc.setDrawColor(...LGREY); doc.setLineWidth(0.1); doc.line(sumX, y + rH, sumX + sumW, y + rH)
+        doc.setFontSize(10); doc.setFont(FONT, 'bold'); setColor(RED)
       } else {
-        doc.setFillColor(...LTEAL); doc.rect(sumX, y, sumW, rH, 'F')
-        doc.setDrawColor(...LGREY); doc.setLineWidth(0.1)
-        doc.line(sumX, y + rH, sumX + sumW, y + rH)
-        doc.setFontSize(8.5); doc.setFont('helvetica', 'normal'); setColor(BLACK)
+        doc.setFillColor(255, 255, 255); doc.rect(sumX, y, sumW, rH, 'F')
+        doc.setDrawColor(...LGREY); doc.setLineWidth(0.1); doc.line(sumX, y + rH, sumX + sumW, y + rH)
+        doc.setFontSize(10); doc.setFont(FONT, 'normal'); setColor(BLACK)
       }
-      doc.text(label, sumX + 3, y + (bold ? 6.5 : 4.5))
-      doc.text(val,   sumX + sumW - 3, y + (bold ? 6.5 : 4.5), { align: 'right' })
+      const tY = type === 'bold' ? y + 7.5 : type === 'light' ? y + 4 : y + 5.5
+      doc.text(label, sumX + 4, tY)
+      doc.text(val,   sumX + sumW - 4, tY, { align: 'right' })
       y += rH + 0.5
     }
-    y += 4
-
-    if (remiseTTC > 0) {
-      checkPage(10)
-      doc.setFillColor(...LTEAL); doc.roundedRect(M, y, INNER, 7, 1, 1, 'F')
-      doc.setFontSize(7.5); doc.setFont('helvetica', 'italic'); setColor(TEAL)
-      doc.text(`Remise appliquée : ${remiseDescription.value}`, M + 3, y + 4.8)
-      y += 11
-    }
+    doc.setDrawColor(...CBORD); doc.setLineWidth(0.3)
+    doc.roundedRect(sumX, sumStartY, sumW, totalSumH, 2, 2, 'S')
+    y += 6
 
     if (r.notes) {
       checkPage(14)
-      doc.setFillColor(...LTEAL); doc.roundedRect(M, y, INNER, 5.5, 1, 1, 'F')
-      doc.setFontSize(7); doc.setFont('helvetica', 'bold'); setColor(TEAL)
+      doc.setFillColor(...CARD_BG); doc.roundedRect(M, y, INNER, 5.5, 1, 1, 'F')
+      doc.setFontSize(9); doc.setFont(FONT, 'bold'); setColor(TEAL)
       doc.text('NOTES', M + 3, y + 4); y += 7
-      doc.setFontSize(7.5); doc.setFont('helvetica', 'normal'); setColor([40, 40, 50])
+      doc.setFontSize(9); doc.setFont(FONT, 'normal'); setColor([40, 40, 50])
       const noteLines = doc.splitTextToSize(r.notes, INNER - 4)
       checkPage(noteLines.length * 4.5 + 4); doc.text(noteLines, M + 2, y)
       y += noteLines.length * 4.5 + 4
@@ -663,32 +684,34 @@ async function generateDevis() {
     const sigH = 28
     const sigY = pageH - FOOTER_H - sigH - 10
     if (y > sigY) addPage()
-    doc.setFillColor(...MGREY); doc.setDrawColor(...LGREY); doc.setLineWidth(0.3)
+    doc.setFillColor(...CARD_TOP); doc.setDrawColor(...CBORD); doc.setLineWidth(0.25)
     doc.roundedRect(M,            sigY, colW, sigH, 1.5, 1.5, 'FD')
     doc.roundedRect(M + colW + 4, sigY, colW, sigH, 1.5, 1.5, 'FD')
-    doc.setFillColor(...LTEAL)
-    doc.roundedRect(M,            sigY, colW, 6, 1.5, 1.5, 'F')
-    doc.rect(M,            sigY + 3, colW, 3, 'F')
-    doc.roundedRect(M + colW + 4, sigY, colW, 6, 1.5, 1.5, 'F')
-    doc.rect(M + colW + 4, sigY + 3, colW, 3, 'F')
-    doc.setFontSize(7); doc.setFont('helvetica', 'bold'); setColor(TEAL)
-    doc.text('LE CLIENT', M + 3, sigY + 4.2)
-    doc.text("FIESTALO'K", M + colW + 7, sigY + 4.2)
-    doc.setFontSize(6.5); doc.setFont('helvetica', 'italic'); setColor(DGREY)
-    doc.text('Mention « Bon pour accord » + date + signature', M + 3, sigY + 10)
-    doc.text('Cachet et signature', M + colW + 7, sigY + 10)
+    doc.setFontSize(9); doc.setFont(FONT, 'bold'); setColor(TEAL)
+    doc.text('LE CLIENT', M + 3, sigY + 5.5)
+    doc.text("FIESTALO'K", M + colW + 7, sigY + 5.5)
+    doc.setFontSize(8); doc.setFont(FONT, 'italic'); setColor(DGREY)
+    doc.text('Mention « Bon pour accord »', M + 3, sigY + 10)
+    doc.text('Date et signature',           M + 3, sigY + 15)
+    doc.text('Cachet et signature',         M + colW + 7, sigY + 10)
 
     // ── FOOTER SUR TOUTES LES PAGES DEVIS ─────────────────────────────────────
     const devisPageCount = doc.getNumberOfPages()
     for (let p = 1; p <= devisPageCount; p++) {
       doc.setPage(p)
       doc.setFillColor(...TEAL); doc.rect(0, pageH - FOOTER_H, W, FOOTER_H, 'F')
-      doc.setFontSize(8); doc.setFont('helvetica', 'normal'); setColor(WHITE)
-      doc.text('06 61 00 50 39',   W * 0.2, pageH - 10, { align: 'center' })
-      doc.text('www.fiestalok.fr', W * 0.5, pageH - 10, { align: 'center' })
-      doc.text('@fiestalok',       W * 0.8, pageH - 10, { align: 'center' })
-      doc.setFontSize(6.5); doc.setFont('helvetica', 'italic'); setColor([180, 210, 225])
-      doc.text("Ce devis est valable 30 jours à compter de sa date d'émission", W / 2, pageH - 4, { align: 'center' })
+      const icoY = pageH - 15.5
+      const txtY = pageH - 9
+      doc.setFontSize(11); doc.setFont(FONT, 'normal'); setColor(WHITE)
+      doc.text('☎',  W * 0.2, icoY, { align: 'center' })
+      doc.text('⊕',  W * 0.5, icoY, { align: 'center' })
+      doc.text('✉',  W * 0.8, icoY, { align: 'center' })
+      doc.setFontSize(8); setColor(WHITE)
+      doc.text('06 61 00 50 39',   W * 0.2, txtY, { align: 'center' })
+      doc.text('www.hoplalok.fr', W * 0.5, txtY, { align: 'center' })
+      doc.text('@hoplalok',       W * 0.8, txtY, { align: 'center' })
+      doc.setFontSize(6.5); doc.setFont(FONT, 'italic'); setColor([180, 210, 225])
+      doc.text("Ce devis est valable 30 jours à compter de sa date d'émission", W / 2, pageH - 3.5, { align: 'center' })
     }
 
     // ── FUSION AVEC CGV ───────────────────────────────────────────────────────
