@@ -4,7 +4,7 @@ import { storeToRefs } from 'pinia'
 import { useRoute } from 'vue-router'
 import { useArticlesStore } from '../stores/articles'
 import { useProduitsStore } from '../stores/produits'
-import { getReservationsByProduit } from '../api/directus'
+import { getReservationsByArticle } from '../api/directus'
 import AvailabilityCalendar from '../components/AvailabilityCalendar.vue'
 
 const route = useRoute()
@@ -59,15 +59,15 @@ const reservations        = ref([])
 const loadingReservations = ref(false)
 
 watch(
-  () => selected.value?.produit_id,
-  async (produitId) => {
-    if (!produitId) { reservations.value = []; return }
+  () => selected.value?.id,
+  async (articleId) => {
+    if (!articleId) { reservations.value = []; return }
     loadingReservations.value = true
     try {
-      const raw = await getReservationsByProduit(produitId)
+      const raw = await getReservationsByArticle(articleId)
       reservations.value = (raw ?? [])
         .map(r => r.reservations_id)
-        .filter(r => r?.date_start && r?.date_end)
+        .filter(r => r?.date_start && r?.date_end && r.status !== 'annulee')
     } finally {
       loadingReservations.value = false
     }

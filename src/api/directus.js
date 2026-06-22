@@ -102,7 +102,7 @@ export const getReservationProduits = (reservationId) =>
     filter: { reservations_id: { _eq: reservationId } },
     fields: 'produits_id.id,produits_id.name,produits_id.images_urls,produits_id.image,quantity,unit_price',
     limit: -1,
-  })
+  }).catch(err => { console.warn('[getReservationProduits]', err.message); return [] })
 
 export const getReservationArticles = (reservationId) =>
   request('GET', '/items/reservations_articles', null, {
@@ -226,6 +226,13 @@ export const getReservationsByProduit = (produitId) =>
     limit: -1,
   })
 
+export const getReservationsByArticle = (articleId) =>
+  request('GET', '/items/reservations_articles', null, {
+    filter: { articles_id: { _eq: articleId } },
+    fields: 'reservations_id.id,reservations_id.date_start,reservations_id.date_end,reservations_id.status',
+    limit: -1,
+  }).catch(() => [])
+
 export const getArticles = (params = {}) =>
   request('GET', '/items/articles', null, {
     fields: [
@@ -296,6 +303,23 @@ export const getArticlesByProduit = (produitIds) =>
 
 export const createReservationArticle = (data) =>
   request('POST', '/items/reservations_articles', data)
+
+// Retourne les IDs d'articles déjà liés à une autre réservation sur la même plage de dates
+export const getReservedArticleIdsForDates = (articleIds, dateStart, dateEnd, excludeResaId) =>
+  request('GET', '/items/reservations_articles', null, {
+    filter: {
+      _and: [
+        { articles_id: { _in: articleIds } },
+        { reservations_id: { status: { _neq: 'annulee' } } },
+        { reservations_id: { date_start: { _lte: dateEnd } } },
+        { reservations_id: { date_end: { _gte: dateStart } } },
+        ...(excludeResaId ? [{ reservations_id: { _neq: excludeResaId } }] : []),
+      ],
+    },
+    fields: 'articles_id',
+    limit: -1,
+  }).then(rows => rows.map(r => r.articles_id))
+  .catch(() => [])
 
 // ── Gammes ─────────────────────────────────────────────────────────────────
 export const getGammes = () =>

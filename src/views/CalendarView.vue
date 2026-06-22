@@ -65,7 +65,7 @@ onMounted(() => store.fetchReservations())
 </script>
 
 <template>
-  <div>
+  <div class="max-w-5xl mx-auto">
 
     <!-- ── Navigation mois ───────────────────────────────────────────────── -->
     <div class="flex items-center justify-between mb-4">

@@ -12,7 +12,7 @@ import {
   deleteReservationArticle, createReservationArticle,
   getReservationValidation, patchReservation,
   uploadFile, getFileUrl,
-  getArticlesByProduit,
+  getArticlesByProduit, getReservedArticleIdsForDates,
   getProduitGammes, getConsommablesByGammes, getGammes,
   getReservationConsommables, createReservationConsommable, deleteReservationConsommable,
   patchConsommable, getGammeArticlesMateriel, getAllArticlesSecondaires, createGammeArticleMateriel,
@@ -43,6 +43,7 @@ const articles           = ref([])
 const selectedArticleIds = ref({})
 const articleLoading     = ref(false)
 const clientContacte     = ref(false)
+const avecTVA            = ref(true)
 const devisSigneFile     = ref(null)
 const devisSigneInput    = ref(null)
 const previewArticle     = ref(null)
@@ -173,19 +174,24 @@ watch(() => props.reservation?.id, async (id) => {
   setupState.value        = {}
   if (!id) { produits.value = []; validatedBy.value = {}; return }
 
-  const [rawP, rawV, rawConso] = await Promise.all([
-    getReservationProduits(id),
-    getReservationValidation(id),
-    getReservationConsommables(id),
-  ])
-  produits.value         = rawP ?? []
-  validatedBy.value      = rawV ?? {}
-  livraison.value        = !!(rawV?.livraison)
-  installation.value     = !!(rawV?.installation)
-  distanceKm.value       = rawV?.distance_km ?? 0
-  remise.value           = !!(rawV?.remise)
-  reservationConso.value = rawConso ?? []
-  consoJunctionIds.value = (rawConso ?? []).map(r => r.id).filter(Boolean)
+  try {
+    const [rawP, rawV, rawConso] = await Promise.all([
+      getReservationProduits(id),
+      getReservationValidation(id),
+      getReservationConsommables(id),
+    ])
+    produits.value         = rawP ?? []
+    validatedBy.value      = rawV ?? {}
+    livraison.value        = !!(rawV?.livraison)
+    installation.value     = !!(rawV?.installation)
+    distanceKm.value       = rawV?.distance_km ?? 0
+    remise.value           = !!(rawV?.remise)
+    reservationConso.value = rawConso ?? []
+    consoJunctionIds.value = (rawConso ?? []).map(r => r.id).filter(Boolean)
+  } catch (err) {
+    console.error('[ReservationModal] chargement produits:', err.message)
+    produits.value = []
+  }
   await loadLinkedArticles(id)
 }, { immediate: true })
 
@@ -197,6 +203,7 @@ const fmtDate     = (d) => d ? format(parseISO(d), "EEEE d MMMM yyyy", { locale:
 const fmtTime     = (d) => { if (!d) return null; const dt = parseISO(d); const h = dt.getHours(); const m = dt.getMinutes(); return (h || m) ? `${String(h).padStart(2,'0')}h${m ? String(m).padStart(2,'0') : ''}` : null }
 const fmtDateLong = (d) => {
   if (!d) return '—'
+  if (/^\d{4}-\d{2}-\d{2}$/.test(d)) return format(parseISO(d), "EEE. d MMM yyyy", { locale: fr })
   const dt = parseISO(d)
   const base = format(dt, "EEE. d MMM yyyy", { locale: fr })
   const h = dt.getHours(); const min = dt.getMinutes()
@@ -431,6 +438,7 @@ async function generateDevis() {
     const c   = client.value
     const now = format(new Date(), 'dd/MM/yyyy')
     const W = 210, M = 10, INNER = 190, pageH = 297, TVA = 0.20
+    const withTVA = avecTVA.value
     const FOOTER_H = 22, USABLE = pageH - FOOTER_H - 4
 
     const TEAL     = [21, 82, 100]
@@ -574,18 +582,25 @@ async function generateDevis() {
 
     // ── 1. PRODUITS ───────────────────────────────────────────────────────────
     sectionHeader('Produits réservés')
-    drawTable([
+    drawTable(withTVA ? [
       { label: 'Produit',           x: M,       w: 65 },
       { label: 'Qté',               x: M + 65,  w: 15, align: 'right' },
       { label: 'Prix unitaire HT',  x: M + 80,  w: 37, align: 'right' },
       { label: 'Prix unitaire TTC', x: M + 117, w: 37, align: 'right' },
       { label: 'Sous-total TTC',    x: M + 154, w: 36, align: 'right' },
+    ] : [
+      { label: 'Produit',           x: M,       w: 100 },
+      { label: 'Qté',               x: M + 100, w: 15, align: 'right' },
+      { label: 'Prix unitaire',     x: M + 115, w: 37, align: 'right' },
+      { label: 'Sous-total',        x: M + 152, w: 38, align: 'right' },
     ], produits.value.map(p => {
       const qty = p.quantity ?? 1
       const ttc = p.unit_price ? Number(p.unit_price) : (p.produits_id?.prix_location ? Number(p.produits_id.prix_location) : null)
       const ht  = ttc != null ? ttc / (1 + TVA) : null
       const st  = ttc != null ? qty * ttc : null
-      return [p.produits_id?.name ?? '—', qty, ht != null ? `${ht.toFixed(2)} €` : '—', ttc != null ? `${ttc.toFixed(2)} €` : '—', st != null ? `${st.toFixed(2)} €` : '—']
+      return withTVA
+        ? [p.produits_id?.name ?? '—', qty, ht != null ? `${ht.toFixed(2)} €` : '—', ttc != null ? `${ttc.toFixed(2)} €` : '—', st != null ? `${st.toFixed(2)} €` : '—']
+        : [p.produits_id?.name ?? '—', qty, ttc != null ? `${ttc.toFixed(2)} €` : '—', st != null ? `${st.toFixed(2)} €` : '—']
     }))
 
     // ── 2. LIVRAISON ET INSTALLATION ─────────────────────────────────────────
@@ -596,11 +611,14 @@ async function generateDevis() {
       const zone  = distanceKm.value <= 15 ? '0–15 km' : distanceKm.value <= 30 ? '15–30 km'
                   : distanceKm.value <= 50 ? '30–50 km' : distanceKm.value <= 80 ? '50–80 km'
                   : distanceKm.value <= 120 ? '80–120 km' : '> 120 km'
-      drawTable([
+      drawTable(withTVA ? [
         { label: 'Zone',      x: M,       w: 120 },
         { label: 'Tarif HT',  x: M + 120, w: 35, align: 'right' },
         { label: 'Tarif TTC', x: M + 155, w: 35, align: 'right' },
-      ], [{ cells: [`Forfait ${zone}`, `${feeHT.toFixed(2)} €`, `${fee.toFixed(2)} €`], subtitle: 'Livraison, installation & déinstallation incluses' }])
+      ] : [
+        { label: 'Zone',      x: M,       w: 155 },
+        { label: 'Tarif',     x: M + 155, w: 35, align: 'right' },
+      ], [{ cells: withTVA ? [`Forfait ${zone}`, `${feeHT.toFixed(2)} €`, `${fee.toFixed(2)} €`] : [`Forfait ${zone}`, `${fee.toFixed(2)} €`], subtitle: 'Livraison, installation & déinstallation incluses' }])
     }
 
     // ── Calculs financiers ────────────────────────────────────────────────────
@@ -619,11 +637,17 @@ async function generateDevis() {
     // ── 3. REMISE CONNAISSANCE ────────────────────────────────────────────────
     if (remiseTTC > 0) {
       sectionHeader('Remise Connaissance')
-      drawTable([
+      drawTable(withTVA ? [
         { label: 'Description', x: M,       w: 120 },
         { label: 'Montant HT',  x: M + 120, w: 35, align: 'right' },
         { label: 'Montant TTC', x: M + 155, w: 35, align: 'right' },
-      ], [[remiseDescription.value, `-${remiseHT.toFixed(2)} €`, `-${remiseTTC.toFixed(2)} €`]])
+      ] : [
+        { label: 'Description', x: M,       w: 155 },
+        { label: 'Montant',     x: M + 155, w: 35, align: 'right' },
+      ], [withTVA
+        ? [remiseDescription.value, `-${remiseHT.toFixed(2)} €`, `-${remiseTTC.toFixed(2)} €`]
+        : [remiseDescription.value, `-${remiseTTC.toFixed(2)} €`]
+      ])
     }
 
     // ── RÉCAPITULATIF ─────────────────────────────────────────────────────────
@@ -632,37 +656,51 @@ async function generateDevis() {
     const RED  = [214, 54, 59]
     const sumX = W - M - 90, sumW = 90
     const summaryRows = [
-      ['Prix initial TTC', `${soustotalTTC.toFixed(2)} €`, 'normal'],
+      [withTVA ? 'Prix initial TTC' : 'Prix initial', `${soustotalTTC.toFixed(2)} €`, 'normal'],
       ...(remiseTTC > 0 ? [['Remise', `-${remiseTTC.toFixed(2)} €`, 'remise']] : []),
-      ['À payer (TTC)',    `${totalTTC.toFixed(2)} €`,     'bold'  ],
-      ['dont TVA 20 %',   `${tvaAmt.toFixed(2)} €`,       'light' ],
-      ['Total HT',        `${totalHT.toFixed(2)} €`,      'light' ],
+      [withTVA ? 'À payer (TTC)' : 'À payer',        `${totalTTC.toFixed(2)} €`,     'bold'  ],
+      ...(withTVA ? [
+        ['dont TVA 20 %', `${tvaAmt.toFixed(2)} €`, 'light'],
+        ['Total HT',      `${totalHT.toFixed(2)} €`, 'light'],
+      ] : []),
     ]
     const rowHFor = (t) => t === 'bold' ? 11 : t === 'light' ? 5.5 : 8
-    const totalSumH = summaryRows.reduce((h, [,, t]) => h + rowHFor(t) + 0.5, 0)
+    const totalSumH = summaryRows.reduce((h, [,, t]) => h + rowHFor(t), 0)
     const sumStartY = y
-    for (const [label, val, type] of summaryRows) {
+    // Fond blanc arrondi pour masquer les débordements de coins
+    doc.setFillColor(255, 255, 255); doc.roundedRect(sumX, sumStartY, sumW, totalSumH, 2, 2, 'F')
+    for (let ri = 0; ri < summaryRows.length; ri++) {
+      const [label, val, type] = summaryRows[ri]
+      const nextType = summaryRows[ri + 1]?.[2]
+      const isLast = ri === summaryRows.length - 1
       const rH = rowHFor(type)
       if (type === 'bold') {
-        doc.setFillColor(...TEAL); doc.rect(sumX, y, sumW, rH, 'F')
+        doc.setFillColor(...TEAL)
+        if (isLast) {
+          // Coins bas arrondis pour suivre le contour de la boîte
+          doc.roundedRect(sumX, y, sumW, rH, 2, 2, 'F')
+          doc.rect(sumX, y, sumW, 3, 'F') // couvre les coins arrondis du haut
+        } else {
+          doc.rect(sumX, y, sumW, rH, 'F')
+        }
         doc.setFontSize(11); doc.setFont(FONT, 'bold'); setColor(WHITE)
       } else if (type === 'light') {
-        doc.setFillColor(250, 250, 252); doc.rect(sumX, y, sumW, rH, 'F')
-        doc.setDrawColor(...LGREY); doc.setLineWidth(0.1); doc.line(sumX, y + rH, sumX + sumW, y + rH)
+        doc.setFillColor(238, 241, 246); doc.rect(sumX, y, sumW, rH, 'F')
+        if (nextType) { doc.setDrawColor(...LGREY); doc.setLineWidth(0.1); doc.line(sumX, y + rH, sumX + sumW, y + rH) }
         doc.setFontSize(8); doc.setFont(FONT, 'normal'); setColor(DGREY)
       } else if (type === 'remise') {
         doc.setFillColor(255, 255, 255); doc.rect(sumX, y, sumW, rH, 'F')
-        doc.setDrawColor(...LGREY); doc.setLineWidth(0.1); doc.line(sumX, y + rH, sumX + sumW, y + rH)
+        if (nextType && nextType !== 'bold') { doc.setDrawColor(...LGREY); doc.setLineWidth(0.1); doc.line(sumX, y + rH, sumX + sumW, y + rH) }
         doc.setFontSize(10); doc.setFont(FONT, 'bold'); setColor(RED)
       } else {
         doc.setFillColor(255, 255, 255); doc.rect(sumX, y, sumW, rH, 'F')
-        doc.setDrawColor(...LGREY); doc.setLineWidth(0.1); doc.line(sumX, y + rH, sumX + sumW, y + rH)
+        if (nextType && nextType !== 'bold') { doc.setDrawColor(...LGREY); doc.setLineWidth(0.1); doc.line(sumX, y + rH, sumX + sumW, y + rH) }
         doc.setFontSize(10); doc.setFont(FONT, 'normal'); setColor(BLACK)
       }
       const tY = type === 'bold' ? y + 7.5 : type === 'light' ? y + 4 : y + 5.5
       doc.text(label, sumX + 4, tY)
       doc.text(val,   sumX + sumW - 4, tY, { align: 'right' })
-      y += rH + 0.5
+      y += rH
     }
     doc.setDrawColor(...CBORD); doc.setLineWidth(0.3)
     doc.roundedRect(sumX, sumStartY, sumW, totalSumH, 2, 2, 'S')
@@ -674,7 +712,7 @@ async function generateDevis() {
       doc.setFontSize(9); doc.setFont(FONT, 'bold'); setColor(TEAL)
       doc.text('NOTES', M + 3, y + 4); y += 7
       doc.setFontSize(9); doc.setFont(FONT, 'normal'); setColor([40, 40, 50])
-      const noteLines = doc.splitTextToSize(r.notes, INNER - 4)
+      const noteLines = doc.splitTextToSize(r.notes.replace(/→/g, '->').replace(/←/g, '<-'), INNER - 4)
       checkPage(noteLines.length * 4.5 + 4); doc.text(noteLines, M + 2, y)
       y += noteLines.length * 4.5 + 4
     }
@@ -753,13 +791,29 @@ async function generateDevis() {
 }
 
 // ── Sélection articles ────────────────────────────────────────────────────────
+const reservedArticleIdsForDates = ref(new Set())
+
+async function loadArticlesWithDateCheck() {
+  const ids = produits.value.map(p => p.produits_id?.id).filter(Boolean)
+  articles.value = ids.length ? await getArticlesByProduit(ids) : []
+  const dateStart  = props.reservation?.date_start
+  const dateEnd    = props.reservation?.date_end
+  const currentId  = props.reservation?.id
+  if (dateStart && dateEnd && articles.value.length) {
+    const artIds   = articles.value.map(a => a.id)
+    const reserved = await getReservedArticleIdsForDates(artIds, dateStart, dateEnd, currentId)
+    reservedArticleIdsForDates.value = new Set(reserved)
+  } else {
+    reservedArticleIdsForDates.value = new Set()
+  }
+}
+
 async function openArticleSelect() {
   step.value = 'article_select'
   articleLoading.value = true
   selectedArticleIds.value = {}
   try {
-    const ids = produits.value.map(p => p.produits_id?.id).filter(Boolean)
-    articles.value = ids.length ? await getArticlesByProduit(ids) : []
+    await loadArticlesWithDateCheck()
   } finally {
     articleLoading.value = false
   }
@@ -784,11 +838,12 @@ const articlesByProduit = computed(() => {
 })
 
 const articlesByProduitGrouped = computed(() => {
+  const reserved = reservedArticleIdsForDates.value
   const out = {}
   for (const [pid, arts] of Object.entries(articlesByProduit.value)) {
     out[pid] = {
-      dispos:  arts.filter(a => a.etat === 'disponible'),
-      autres:  arts.filter(a => a.etat !== 'disponible'),
+      dispos:  arts.filter(a => a.etat === 'disponible' && !reserved.has(a.id)),
+      autres:  arts.filter(a => a.etat !== 'disponible' || reserved.has(a.id)),
     }
   }
   return out
@@ -863,8 +918,18 @@ async function openSetupList() {
   try {
     const produitIds = produits.value.map(p => p.produits_id?.id).filter(Boolean)
 
-    const artLibres = await getArticles().catch(() => [])
-    allArticlesLibres.value = artLibres ?? []
+    const artLibres = (await getArticles().catch(() => [])) ?? []
+    const dispLibres = artLibres.filter(a => a.etat === 'disponible')
+    const libDateStart = props.reservation?.date_start
+    const libDateEnd   = props.reservation?.date_end
+    const libCurrentId = props.reservation?.id
+    if (libDateStart && libDateEnd && dispLibres.length) {
+      const libreIds    = dispLibres.map(a => a.id)
+      const reservedLib = new Set(await getReservedArticleIdsForDates(libreIds, libDateStart, libDateEnd, libCurrentId))
+      allArticlesLibres.value = dispLibres.filter(a => !reservedLib.has(a.id))
+    } else {
+      allArticlesLibres.value = dispLibres
+    }
     selectedExtraIds.value  = []
     extraSearch.value       = ''
     showCadeauAdd.value     = false
@@ -989,8 +1054,7 @@ async function openSetupForProduct(produitId) {
   step.value = 'article_select'
   articleLoading.value = true
   try {
-    const ids = produits.value.map(p => p.produits_id?.id).filter(Boolean)
-    articles.value = ids.length ? await getArticlesByProduit(ids) : []
+    await loadArticlesWithDateCheck()
   } finally {
     articleLoading.value = false
   }
@@ -1109,6 +1173,60 @@ function finalizeDevisRealise() {
   step.value = 'detail'
 }
 
+// ── Email devis ───────────────────────────────────────────────────────────────
+const devisEmailLink = computed(() => {
+  const c = client.value
+  if (!c?.email) return null
+  const r = props.reservation
+  const lines = []
+
+  lines.push(`Bonjour ${c.first_name} ${c.last_name},`)
+  lines.push('')
+  lines.push('Veuillez trouver ci-dessous le récapitulatif de votre réservation Fiestalok.')
+  lines.push('')
+  lines.push(`Période : du ${fmtDate(r.date_start)} au ${fmtDate(r.date_end)}`)
+  lines.push('')
+
+  if (produits.value.length) {
+    lines.push('Articles réservés :')
+    for (const item of produits.value) {
+      const nom = item.produits_id?.name ?? 'Article'
+      const qty = item.quantity ?? 1
+      const pu  = item.unit_price != null ? ` — ${item.unit_price} €/j` : ''
+      lines.push(`  • ${nom} x${qty}${pu}`)
+    }
+    lines.push('')
+  }
+
+  if (r.total_price != null) {
+    lines.push(`Total estimé : ${r.total_price} €`)
+    lines.push('')
+  }
+
+  if (r.delivery && r.delivery_address) {
+    lines.push(`Livraison à : ${r.delivery_address}`)
+    lines.push('')
+  }
+
+  if (devisGenereUrl.value) {
+    lines.push(`Votre devis PDF : ${devisGenereUrl.value}`)
+    lines.push('')
+  }
+
+  if (r.notes) {
+    lines.push(`Notes : ${r.notes}`)
+    lines.push('')
+  }
+
+  lines.push("N'hésitez pas à nous contacter pour toute question.")
+  lines.push('')
+  lines.push("L'équipe Fiestalok")
+
+  const subject = encodeURIComponent(`Votre devis Fiestalok – Réservation n°${r.id}`)
+  const body    = encodeURIComponent(lines.join('\n'))
+  return `mailto:${c.email}?subject=${subject}&body=${body}`
+})
+
 // ── Articles libres filtrés ───────────────────────────────────────────────────
 const alreadyLinkedIds = computed(() => new Set([
   ...linkedArticles.value.map(la => la.article?.id).filter(Boolean),
@@ -1173,7 +1291,7 @@ function showToast(msg, type) {
 }
 
 const ETAT_LABEL = { disponible: 'Disponible', loue: 'Loué', en_location: 'En location', en_maintenance: 'Maintenance', hors_service: 'Hors service' }
-const ETAT_CLS   = { disponible: 'bg-blue-100 text-blue-700', loue: 'bg-blue-100 text-blue-700', en_location: 'bg-blue-100 text-blue-700', en_maintenance: 'bg-amber-100 text-amber-700', hors_service: 'bg-red-100 text-red-700' }
+const ETAT_CLS   = { disponible: 'bg-green-100 text-green-700', loue: 'bg-amber-100 text-amber-700', en_location: 'bg-amber-100 text-amber-700', en_maintenance: 'bg-orange-100 text-orange-700', hors_service: 'bg-red-100 text-red-700' }
 
 const STATUS_ORDER = ['en_attente', 'devis_realise', 'devis_confirme', 'terminee']
 const statusIdx = computed(() => STATUS_ORDER.indexOf(props.reservation?.status ?? ''))
@@ -1779,12 +1897,23 @@ async function confirmStepBack() {
                     </div>
                   </a>
                   <div v-else class="flex items-center justify-center px-3 py-5 text-xs text-base-content/30">Non généré</div>
-                  <div v-if="reservation.status === 'en_attente' || reservation.status === 'devis_realise'" class="px-3 py-2.5">
+                  <div v-if="reservation.status === 'en_attente' || reservation.status === 'devis_realise'" class="px-3 pt-2.5 pb-1.5 flex flex-col gap-2">
+                    <label class="flex items-center gap-2 cursor-pointer select-none">
+                      <input type="checkbox" v-model="avecTVA" class="checkbox checkbox-xs checkbox-primary" />
+                      <span class="text-xs text-base-content/70">Assujetti TVA (afficher HT)</span>
+                    </label>
                     <button class="btn btn-xs gap-1 w-full" :class="devisGenereUrl ? 'btn-ghost' : 'btn-primary'"
                       :disabled="loading === 'generate_devis'" @click="generateDevis">
                       <span v-if="loading !== 'generate_devis'">{{ devisGenereUrl ? 'Regénérer' : 'Générer le devis' }}</span>
                       <span v-else class="loading loading-spinner loading-xs"></span>
                     </button>
+                    <a v-if="devisEmailLink" :href="devisEmailLink"
+                      class="btn btn-xs btn-outline gap-1 w-full">
+                      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="w-3 h-3">
+                        <path d="M1.75 2h12.5c.966 0 1.75.784 1.75 1.75v8.5A1.75 1.75 0 0 1 14.25 14H1.75A1.75 1.75 0 0 1 0 12.25v-8.5C0 2.784.784 2 1.75 2ZM1.5 5.871v6.379c0 .138.112.25.25.25h12.5a.25.25 0 0 0 .25-.25V5.871l-5.927 3.955a.75.75 0 0 1-.846 0L1.5 5.871Zm13-1.798-6.5 4.333L1.5 4.073V3.75c0-.138.112-.25.25-.25h12.5a.25.25 0 0 0 .25.25v.323Z"/>
+                      </svg>
+                      Envoyer par email
+                    </a>
                   </div>
                 </div>
                 <!-- Droite : Devis signé -->
@@ -1963,8 +2092,9 @@ async function confirmStepBack() {
                             <p class="text-xs text-base-content/40 mt-0.5">{{ art.entrepot_id?.nom }}</p>
                           </div>
                         </label>
-                        <span class="text-[10px] px-1.5 py-0.5 rounded-full font-semibold shrink-0" :class="ETAT_CLS[art.etat]">
-                          {{ ETAT_LABEL[art.etat] ?? art.etat }}
+                        <span class="text-[10px] px-1.5 py-0.5 rounded-full font-semibold shrink-0"
+                          :class="reservedArticleIdsForDates.has(art.id) ? 'bg-red-100 text-red-600' : ETAT_CLS[art.etat]">
+                          {{ reservedArticleIdsForDates.has(art.id) ? 'Réservé ces dates' : (ETAT_LABEL[art.etat] ?? art.etat) }}
                         </span>
                       </div>
                     </div>
@@ -2148,10 +2278,10 @@ async function confirmStepBack() {
                     <div v-else class="divide-y divide-base-100">
                       <label v-for="art in group.materielArts" :key="art.id"
                         class="flex items-center gap-3 px-4 py-3 cursor-pointer hover:bg-base-50 transition-colors"
-                        :class="(art.etat === 'hors_service' || art.etat === 'en_maintenance') ? 'opacity-50' : ''">
+                        :class="(art.etat !== 'disponible' || reservedArticleIdsForDates.has(art.id)) ? 'opacity-50 cursor-not-allowed' : ''">
                         <input type="checkbox" class="checkbox checkbox-sm checkbox-warning shrink-0"
                           :checked="setupState[currentSetupProduitId]?.materielIds?.includes(art.id)"
-                          :disabled="art.etat === 'hors_service' || art.etat === 'en_maintenance'"
+                          :disabled="art.etat !== 'disponible' || reservedArticleIdsForDates.has(art.id)"
                           @change="toggleMaterielForSetup(art.id, $event.target.checked)" />
                         <div class="flex-1 min-w-0">
                           <div class="flex items-center gap-2 flex-wrap">
@@ -2159,6 +2289,7 @@ async function confirmStepBack() {
                             <span v-if="art.name" class="text-base-content/30 text-xs">—</span>
                             <span v-if="art.name" class="text-sm text-base-content/70">{{ art.name }}</span>
                             <span class="text-[10px] px-1.5 py-0.5 rounded-full font-semibold" :class="ETAT_CLS[art.etat]">{{ ETAT_LABEL[art.etat] ?? art.etat }}</span>
+                            <span v-if="reservedArticleIdsForDates.has(art.id) && art.etat === 'disponible'" class="text-[10px] px-1.5 py-0.5 rounded-full font-semibold bg-red-100 text-red-700">Réservé ces dates</span>
                           </div>
                           <p class="text-xs text-base-content/40 mt-0.5">{{ art.entrepot_id?.nom }}</p>
                         </div>
@@ -2184,7 +2315,7 @@ async function confirmStepBack() {
                 </div>
                 <div v-else class="divide-y divide-blue-50/80">
                   <template v-for="group in currentGammes" :key="group.gamme.id">
-                    <div v-for="item in group.consoItems" :key="item.id" class="flex items-center gap-3 px-4 py-3">
+                    <div v-for="item in group.consoItems" :key="item.id" class="flex items-center gap-3 px-4 py-3" :class="(item.consommable_id?.stock ?? 0) <= 0 ? 'opacity-50' : ''">
                       <div class="flex-1 min-w-0">
                         <p class="text-sm font-semibold">{{ item.consommable_id?.nom }}</p>
                         <div class="flex items-center gap-2 mt-0.5 flex-wrap">
@@ -2198,12 +2329,15 @@ async function confirmStepBack() {
                       </div>
                       <div class="flex items-center gap-1 shrink-0">
                         <button type="button" class="btn btn-xs btn-ghost btn-circle text-blue-500"
+                          :disabled="(setupState[currentSetupProduitId]?.consoQty[item.consommable_id?.id] ?? 0) <= 0"
                           @click="setupState[currentSetupProduitId].consoQty[item.consommable_id?.id] = Math.max(0, (setupState[currentSetupProduitId].consoQty[item.consommable_id?.id] ?? 0) - 1)">−</button>
                         <input type="number" min="0" :max="item.consommable_id?.stock ?? 999"
+                          :disabled="(item.consommable_id?.stock ?? 0) <= 0"
                           :value="setupState[currentSetupProduitId]?.consoQty[item.consommable_id?.id] ?? 0"
                           @change="setupState[currentSetupProduitId].consoQty[item.consommable_id?.id] = Math.max(0, Math.min(item.consommable_id?.stock ?? 999, Number($event.target.value)))"
                           class="input input-bordered input-xs w-14 text-center font-bold" />
                         <button type="button" class="btn btn-xs btn-ghost btn-circle text-blue-500"
+                          :disabled="(item.consommable_id?.stock ?? 0) <= 0 || (setupState[currentSetupProduitId]?.consoQty[item.consommable_id?.id] ?? 0) >= (item.consommable_id?.stock ?? 0)"
                           @click="setupState[currentSetupProduitId].consoQty[item.consommable_id?.id] = Math.min(item.consommable_id?.stock ?? 999, (setupState[currentSetupProduitId].consoQty[item.consommable_id?.id] ?? 0) + 1)">+</button>
                       </div>
                       <div class="w-16 text-right shrink-0 text-xs font-bold text-blue-700">

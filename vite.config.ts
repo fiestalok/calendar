@@ -14,7 +14,7 @@ export default defineConfig({
     port: 5174,
     proxy: {
       '/api': {
-        target: 'http://localhost:8055',
+        target: 'https://back.fiestalok.fr',
         changeOrigin: true,
         rewrite: (path) => path.replace(/^\/api/, '')
       }

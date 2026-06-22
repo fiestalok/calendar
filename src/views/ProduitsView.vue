@@ -162,7 +162,9 @@ const calDays = computed(() => {
   return cells
 })
 
-const totalArticleCount = computed(() => selectedArticles.value.length)
+const totalArticleCount = computed(() =>
+  selectedArticles.value.filter(a => a.etat !== 'hors_service' && a.etat !== 'en_maintenance').length
+)
 
 function reservationsOnDay(day) {
   if (!day) return 0
