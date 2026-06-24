@@ -62,6 +62,12 @@ export const useReservationsStore = defineStore('reservations', {
         this.reservations[index] = { ...this.reservations[index], status }
       }
     },
+    updateField(id, fields) {
+      const index = this.reservations.findIndex(r => r.id === id)
+      if (index !== -1) {
+        this.reservations[index] = { ...this.reservations[index], ...fields }
+      }
+    },
     setFilter(status) {
       this.filterStatus = status
     }

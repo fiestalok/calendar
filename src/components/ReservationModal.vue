@@ -333,6 +333,34 @@ async function uploadDevisSigne() {
 
 const factureFile  = ref(null)
 const factureInput = ref(null)
+
+// ── Notes édition ─────────────────────────────────────────────────────────────
+const notesEditing = ref(false)
+const notesSaving  = ref(false)
+const notesDraft   = ref('')
+
+function startNotesEdit() {
+  notesDraft.value  = props.reservation?.notes ?? ''
+  notesEditing.value = true
+}
+
+function cancelNotesEdit() {
+  notesEditing.value = false
+}
+
+async function saveNotes() {
+  notesSaving.value = true
+  try {
+    await patchReservation(props.reservation.id, { notes: notesDraft.value || null })
+    await store.updateField(props.reservation.id, { notes: notesDraft.value || null })
+    notesEditing.value = false
+    showToast('Notes enregistrées', 'success')
+  } catch (err) {
+    showToast(err?.message ?? 'Erreur', 'error')
+  } finally {
+    notesSaving.value = false
+  }
+}
 const factureUrl   = computed(() =>
   validatedBy.value.fichier_facture ? getFileUrl(validatedBy.value.fichier_facture) : null
 )
@@ -1730,12 +1758,38 @@ async function confirmStepBack() {
             </div>
 
             <!-- ── Notes ────────────────────────────────────────────────── -->
-            <div v-if="reservation.notes" class="rounded-xl border border-blue-100 bg-base-100 overflow-hidden shadow-sm">
-              <div class="px-4 py-2.5 border-b border-blue-100 bg-blue-50 flex items-center gap-2">
+            <div class="rounded-xl border bg-base-100 overflow-hidden shadow-sm" :class="notesEditing ? 'border-blue-300' : 'border-blue-100'">
+              <div class="px-4 py-2.5 border-b flex items-center gap-2" :class="notesEditing ? 'border-blue-200 bg-blue-50' : 'border-blue-100 bg-blue-50'">
                 <div class="w-0.5 h-3.5 bg-blue-400 rounded-full shrink-0"></div>
                 <span class="text-xs font-semibold text-gray-500 uppercase tracking-wide">Notes</span>
+                <button v-if="!notesEditing" @click="startNotesEdit"
+                  class="ml-auto inline-flex items-center gap-1 text-xs px-2.5 py-1 border border-gray-200 text-gray-500 hover:bg-white rounded-lg transition-colors">
+                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="w-3 h-3">
+                    <path d="M13.488 2.513a1.75 1.75 0 0 0-2.475 0L6.75 6.774a2.75 2.75 0 0 0-.596.892l-.848 2.047a.75.75 0 0 0 .98.98l2.047-.848a2.75 2.75 0 0 0 .892-.596l4.261-4.263a1.75 1.75 0 0 0 0-2.474Z"/>
+                    <path d="M4.75 3.5c-.69 0-1.25.56-1.25 1.25v6.5c0 .69.56 1.25 1.25 1.25h6.5c.69 0 1.25-.56 1.25-1.25V9a.75.75 0 0 1 1.5 0v2.25A2.75 2.75 0 0 1 11.25 14h-6.5A2.75 2.75 0 0 1 2 11.25v-6.5A2.75 2.75 0 0 1 4.75 2H7a.75.75 0 0 1 0 1.5H4.75Z"/>
+                  </svg>
+                  Modifier
+                </button>
+                <span v-else class="ml-auto text-xs text-blue-600 font-semibold">✎ En cours…</span>
               </div>
-              <p class="text-sm px-4 py-3 text-base-content/70 leading-relaxed">{{ reservation.notes }}</p>
+              <div v-if="!notesEditing" class="px-4 py-3">
+                <p v-if="reservation.notes" class="text-sm text-base-content/70 leading-relaxed whitespace-pre-line">{{ reservation.notes }}</p>
+                <p v-else class="text-sm text-gray-400 italic">Aucune note. Cliquez sur Modifier pour en ajouter.</p>
+              </div>
+              <div v-else class="p-4 space-y-3">
+                <textarea v-model="notesDraft" rows="4" placeholder="Saisissez vos notes…"
+                  class="w-full text-sm px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400 resize-none bg-white"/>
+                <div class="flex gap-2 justify-end">
+                  <button @click="cancelNotesEdit"
+                    class="px-3 py-1.5 text-xs font-semibold text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors">
+                    Annuler
+                  </button>
+                  <button @click="saveNotes" :disabled="notesSaving"
+                    class="px-3 py-1.5 text-xs font-semibold bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors">
+                    {{ notesSaving ? 'Enregistrement…' : 'Sauvegarder' }}
+                  </button>
+                </div>
+              </div>
             </div>
 
             <!-- ── Livraison + Remise ────────────────────────────────────── -->
