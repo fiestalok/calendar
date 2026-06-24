@@ -407,6 +407,50 @@ const linkedDevis = computed(() => {
 
 function openReservationDetail(r) { selectedReservation.value = r }
 
+const allDevisRows = computed(() => {
+  const manual = (selected.value?.devis ?? []).map(d => ({
+    _type: 'manuel',
+    id: `m-${d.id}`,
+    date: d.date,
+    description: d.description,
+    montant: d.montant,
+    statut: d.statut,
+    statusCls: DEVIS_STATUS[d.statut]?.cls ?? 'bg-gray-100 text-gray-500',
+    statusLabel: DEVIS_STATUS[d.statut]?.label ?? d.statut ?? '—',
+    fichier_devis: d.fichier_id,
+    fichier_devis_signe: null,
+    fichier_facture: null,
+    facture_ref: d.facture_ref,
+    facture_id: d.facture_id,
+    facture_numero: d.facture_numero,
+    numero: d.numero,
+    _raw: d,
+  }))
+
+  const generated = clientReservations.value
+    .filter(r => r.fichier_devis)
+    .map(r => ({
+      _type: 'genere',
+      id: `r-${r.id}`,
+      date: r.date_start,
+      description: r.notes,
+      montant: r.total_price,
+      statut: r.status,
+      statusCls: RESERVATION_STATUS[r.status]?.cls ?? 'bg-gray-100 text-gray-500',
+      statusLabel: RESERVATION_STATUS[r.status]?.label ?? r.status ?? '—',
+      fichier_devis: r.fichier_devis,
+      fichier_devis_signe: r.fichier_devis_signe,
+      fichier_facture: r.fichier_facture,
+      facture_ref: null,
+      facture_id: null,
+      facture_numero: null,
+      numero: null,
+      _raw: r,
+    }))
+
+  return [...manual, ...generated].sort((a, b) => new Date(b.date) - new Date(a.date))
+})
+
 // ── Input helper class ────────────────────────────────────────────────────────
 const inputCls = 'w-full text-sm px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white'
 </script>
@@ -966,7 +1010,7 @@ const inputCls = 'w-full text-sm px-3 py-2 border border-gray-200 rounded-lg foc
                 <div class="px-5 py-3 border-b border-gray-100 flex items-center gap-2">
                   <span class="text-[#e65100]">▲</span>
                   <span class="text-sm font-semibold text-gray-700">Historique des devis</span>
-                  <span class="text-xs text-gray-400">{{ selected.devis?.length ?? 0 }}</span>
+                  <span class="text-xs text-gray-400">{{ allDevisRows.length }}</span>
                   <button @click="openDevisCreate"
                     class="ml-auto inline-flex items-center gap-1 text-xs px-2 py-1 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-md transition-colors">
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="w-3 h-3">
@@ -975,42 +1019,73 @@ const inputCls = 'w-full text-sm px-3 py-2 border border-gray-200 rounded-lg foc
                     Nouveau
                   </button>
                 </div>
-                <div v-if="!selected.devis?.length" class="px-5 py-8 text-center text-sm text-gray-400">
+                <div v-if="reservationsLoading" class="px-5 py-6 flex items-center gap-2 text-sm text-gray-400">
+                  <svg class="animate-spin w-4 h-4 text-gray-300" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"/>
+                    <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 0 1 8-8v8H4Z"/>
+                  </svg>
+                  Chargement…
+                </div>
+                <div v-else-if="!allDevisRows.length" class="px-5 py-8 text-center text-sm text-gray-400">
                   Aucun devis pour ce client.
                 </div>
                 <table v-else class="w-full text-sm">
                   <thead class="bg-gray-50 border-b border-gray-100">
                     <tr>
-                      <th class="px-4 py-2.5 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">N° Devis</th>
-                      <th class="px-4 py-2.5 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Date</th>
+                      <th class="px-4 py-2.5 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Type</th>
+                      <th class="px-4 py-2.5 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">N° / Date</th>
                       <th class="px-4 py-2.5 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Description</th>
                       <th class="px-4 py-2.5 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Statut</th>
-                      <th class="px-4 py-2.5 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Facture</th>
+                      <th class="px-4 py-2.5 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Documents</th>
                       <th class="px-4 py-2.5 text-right text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Montant</th>
                     </tr>
                   </thead>
                   <tbody class="divide-y divide-gray-50">
-                    <tr v-for="d in selected.devis" :key="d.id" class="hover:bg-gray-50 cursor-pointer" @click="openDevisEdit(d)">
-                      <td class="px-4 py-3 font-mono text-xs text-gray-600 font-semibold">{{ d.numero || '—' }}</td>
-                      <td class="px-4 py-3 text-gray-500 whitespace-nowrap text-xs">{{ formatDate(d.date) }}</td>
-                      <td class="px-4 py-3 text-gray-700 max-w-[200px] truncate">{{ d.description || '—' }}</td>
+                    <tr v-for="row in allDevisRows" :key="row.id"
+                      class="hover:bg-gray-50 cursor-pointer transition-colors"
+                      @click="row._type === 'manuel' ? openDevisEdit(row._raw) : openReservationDetail(row._raw)">
                       <td class="px-4 py-3">
-                        <span class="text-[11px] px-2 py-0.5 rounded-full font-semibold"
-                          :class="DEVIS_STATUS[d.statut]?.cls ?? 'bg-gray-100 text-gray-500'">
-                          {{ DEVIS_STATUS[d.statut]?.label ?? d.statut ?? '—' }}
+                        <span class="text-[10px] px-2 py-0.5 rounded-full font-bold uppercase tracking-wide"
+                          :class="row._type === 'genere' ? 'bg-orange-100 text-orange-600' : 'bg-purple-100 text-purple-600'">
+                          {{ row._type === 'genere' ? 'Généré' : 'Manuel' }}
                         </span>
                       </td>
-                      <td class="px-4 py-3">
-                        <span v-if="d.facture_id || d.facture_ref"
-                          class="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full font-semibold bg-blue-100 text-blue-700">
-                          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 12 12" fill="currentColor" class="w-2.5 h-2.5">
-                            <path fill-rule="evenodd" d="M3 1.5A1.5 1.5 0 0 0 1.5 3v6A1.5 1.5 0 0 0 3 10.5h6A1.5 1.5 0 0 0 10.5 9V5.621a1.5 1.5 0 0 0-.44-1.06L7.94 2.439A1.5 1.5 0 0 0 6.878 2H3Zm2.25 6a.75.75 0 0 0 0 1.5h3a.75.75 0 0 0 0-1.5h-3Zm0-2.25a.75.75 0 0 0 0 1.5h3a.75.75 0 0 0 0-1.5h-3Z" clip-rule="evenodd"/>
-                          </svg>
-                          {{ d.facture_numero ?? d.facture_ref ?? 'Facturée' }}
-                        </span>
-                        <span v-else class="text-[11px] text-gray-300">—</span>
+                      <td class="px-4 py-3 whitespace-nowrap">
+                        <div class="font-mono text-xs text-gray-600 font-semibold">{{ row.numero || '—' }}</div>
+                        <div class="text-[11px] text-gray-400 mt-0.5">{{ formatDate(row.date) }}</div>
                       </td>
-                      <td class="px-4 py-3 text-right font-semibold text-gray-800">{{ d.montant != null ? formatCurrency(d.montant) : '—' }}</td>
+                      <td class="px-4 py-3 text-gray-700 max-w-[180px] truncate text-xs">{{ row.description || '—' }}</td>
+                      <td class="px-4 py-3">
+                        <span class="text-[11px] px-2 py-0.5 rounded-full font-semibold" :class="row.statusCls">
+                          {{ row.statusLabel }}
+                        </span>
+                      </td>
+                      <td class="px-4 py-3" @click.stop>
+                        <div class="flex items-center gap-1">
+                          <a v-if="row.fichier_devis" :href="getFileUrl(row.fichier_devis)" target="_blank"
+                            class="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-semibold bg-blue-50 text-blue-600 hover:bg-blue-100 transition-colors">
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 12 12" fill="currentColor" class="w-2.5 h-2.5"><path fill-rule="evenodd" d="M3 1.5A1.5 1.5 0 0 0 1.5 3v6A1.5 1.5 0 0 0 3 10.5h6A1.5 1.5 0 0 0 10.5 9V5.621a1.5 1.5 0 0 0-.44-1.06L7.94 2.439A1.5 1.5 0 0 0 6.878 2H3Zm2.25 6a.75.75 0 0 0 0 1.5h3a.75.75 0 0 0 0-1.5h-3Zm0-2.25a.75.75 0 0 0 0 1.5h3a.75.75 0 0 0 0-1.5h-3Z" clip-rule="evenodd"/></svg>
+                            Devis
+                          </a>
+                          <a v-if="row.fichier_devis_signe" :href="getFileUrl(row.fichier_devis_signe)" target="_blank"
+                            class="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-semibold bg-green-50 text-green-600 hover:bg-green-100 transition-colors">
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 12 12" fill="currentColor" class="w-2.5 h-2.5"><path fill-rule="evenodd" d="M3 1.5A1.5 1.5 0 0 0 1.5 3v6A1.5 1.5 0 0 0 3 10.5h6A1.5 1.5 0 0 0 10.5 9V5.621a1.5 1.5 0 0 0-.44-1.06L7.94 2.439A1.5 1.5 0 0 0 6.878 2H3Zm2.25 6a.75.75 0 0 0 0 1.5h3a.75.75 0 0 0 0-1.5h-3Zm0-2.25a.75.75 0 0 0 0 1.5h3a.75.75 0 0 0 0-1.5h-3Z" clip-rule="evenodd"/></svg>
+                            Signé
+                          </a>
+                          <a v-if="row.fichier_facture" :href="getFileUrl(row.fichier_facture)" target="_blank"
+                            class="inline-flex items-center gap-1 text-[10px] px-1.5 py-0.5 rounded font-semibold bg-orange-50 text-orange-600 hover:bg-orange-100 transition-colors">
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 12 12" fill="currentColor" class="w-2.5 h-2.5"><path fill-rule="evenodd" d="M3 1.5A1.5 1.5 0 0 0 1.5 3v6A1.5 1.5 0 0 0 3 10.5h6A1.5 1.5 0 0 0 10.5 9V5.621a1.5 1.5 0 0 0-.44-1.06L7.94 2.439A1.5 1.5 0 0 0 6.878 2H3Zm2.25 6a.75.75 0 0 0 0 1.5h3a.75.75 0 0 0 0-1.5h-3Zm0-2.25a.75.75 0 0 0 0 1.5h3a.75.75 0 0 0 0-1.5h-3Z" clip-rule="evenodd"/></svg>
+                            Facture
+                          </a>
+                          <span v-if="!row.fichier_devis && !row.fichier_devis_signe && !row.fichier_facture && (row.facture_id || row.facture_ref)"
+                            class="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full font-semibold bg-blue-100 text-blue-700">
+                            {{ row.facture_numero ?? row.facture_ref ?? 'Facturée' }}
+                          </span>
+                          <span v-if="!row.fichier_devis && !row.fichier_devis_signe && !row.fichier_facture && !row.facture_id && !row.facture_ref"
+                            class="text-[11px] text-gray-300">—</span>
+                        </div>
+                      </td>
+                      <td class="px-4 py-3 text-right font-semibold text-gray-800">{{ row.montant != null ? formatCurrency(row.montant) : '—' }}</td>
                     </tr>
                   </tbody>
                 </table>
