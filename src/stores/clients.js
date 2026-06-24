@@ -7,7 +7,7 @@ function mapClient(c) {
     type:            c.typeClient?.toLowerCase() ?? null,
     prenom:          c.first_name    ?? null,
     nom:             c.last_name     ?? null,
-    raison_sociale:  c.company_name  ?? null,
+    raison_sociale:  (c.company_name && c.company_name !== 'undefined') ? c.company_name : null,
     email:           c.email         ?? null,
     telephone:       c.phone         ?? null,
     adresse:         c.address       ?? null,

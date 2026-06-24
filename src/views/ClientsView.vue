@@ -199,8 +199,8 @@ function selectClient(client) {
 }
 
 function displayName(c) {
-  if (c.type === 'particulier') return [c.prenom, c.nom].filter(Boolean).join(' ') || '—'
-  return c.raison_sociale || [c.prenom, c.nom].filter(Boolean).join(' ') || '—'
+  if (c.type === 'entreprise') return c.raison_sociale || [c.prenom, c.nom].filter(Boolean).join(' ') || '—'
+  return [c.prenom, c.nom].filter(Boolean).join(' ') || c.raison_sociale || '—'
 }
 
 function initials(c) {
