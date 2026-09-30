@@ -2,19 +2,30 @@ import axios from 'axios'
 
 const BASE_URL = import.meta.env.VITE_DIRECTUS_URL
 
+const REFRESH_MARGIN = 60_000   // renouvelle l'access token 1 min avant son expiration
+const RETRY_OFFLINE  = 30_000   // nouvel essai si le serveur est injoignable
+
 let accessToken = null
 let refreshToken = null
+let expiresAt = 0               // échéance de l'access token (ms), 0 = inconnue
+let refreshing = null           // renouvellement en cours, partagé par toutes les requêtes
+let refreshTimer = null
 let onExpiredCallback = null
 let onRefreshCallback = null
+let loadStoredTokens = () => null
 
-export function setTokens(access, refresh) {
+export function setTokens(access, refresh, expires = 0) {
   accessToken = access
   refreshToken = refresh ?? null
+  expiresAt = expires ?? 0
+  scheduleRefresh()
 }
 
 export function clearTokens() {
   accessToken = null
   refreshToken = null
+  expiresAt = 0
+  clearTimeout(refreshTimer)
 }
 
 export function assetUrl(fileId) {
@@ -26,20 +37,77 @@ export function assetUrl(fileId) {
 
 export function setOnExpired(cb) { onExpiredCallback = cb }
 export function setOnRefresh(cb) { onRefreshCallback = cb }
+// Lecture des jetons enregistrés, éventuellement renouvelés par un autre onglet
+export function setTokenLoader(fn) { loadStoredTokens = fn }
 
-async function tryRefresh() {
-  if (!refreshToken) return false
+// Directus n'accepte chaque refresh token qu'une fois : un seul renouvellement à la fois
+// dans l'onglet, et entre onglets grâce au verrou du navigateur.
+// Résultat : 'ok' | 'expired' (session vraiment terminée) | 'offline' (serveur injoignable)
+function tryRefresh() {
+  const locks = globalThis.navigator?.locks
+  refreshing ??= (locks ? locks.request('hoplalok-token-refresh', refresh) : refresh())
+    .finally(() => { refreshing = null })
+  return refreshing
+}
+
+async function refresh() {
+  if (adoptStoredTokens() && expiresAt - Date.now() > REFRESH_MARGIN) return 'ok'
+  if (!refreshToken) return 'expired'
+  const sent = refreshToken
   try {
-    const { data } = await axios.post(`${BASE_URL}/auth/refresh`, {
-      refresh_token: refreshToken,
-      mode: 'json',
-    })
-    accessToken = data.data.access_token
-    refreshToken = data.data.refresh_token
-    if (onRefreshCallback) onRefreshCallback(accessToken, refreshToken)
-    return true
-  } catch {
-    return false
+    const { data } = await axios.post(`${BASE_URL}/auth/refresh`, { refresh_token: sent, mode: 'json' })
+    const { access_token, refresh_token, expires } = data.data
+    setTokens(access_token, refresh_token, Date.now() + expires)
+    onRefreshCallback?.(accessToken, refreshToken, expiresAt)
+    return 'ok'
+  } catch (err) {
+    if (!err.response) return 'offline'
+    return adoptStoredTokens() ? 'ok' : 'expired'
+  }
+}
+
+// Reprend les jetons enregistrés s'ils sont plus récents que les nôtres
+function adoptStoredTokens() {
+  const stored = loadStoredTokens()
+  if (!stored?.refresh || stored.refresh === refreshToken) return false
+  setTokens(stored.access, stored.refresh, stored.expires)
+  return true
+}
+
+function scheduleRefresh(delay = expiresAt ? expiresAt - Date.now() - REFRESH_MARGIN : null) {
+  clearTimeout(refreshTimer)
+  if (!refreshToken || delay == null) return
+  refreshTimer = setTimeout(async () => {
+    const result = await tryRefresh()
+    if (result === 'expired') onExpiredCallback?.()
+    if (result === 'offline') scheduleRefresh(RETRY_OFFLINE)
+  }, Math.max(delay, 0))
+}
+
+// Les minuteurs sont ralentis quand l'onglet est en arrière-plan : on vérifie au retour
+if (typeof document !== 'undefined') {
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible' && expiresAt && expiresAt - Date.now() < REFRESH_MARGIN) scheduleRefresh(0)
+  })
+}
+
+async function renewSession() {
+  const result = await tryRefresh()
+  if (result === 'expired') onExpiredCallback?.()
+  return result === 'ok'
+}
+
+const authHeaders = () => accessToken ? { Authorization: `Bearer ${accessToken}` } : {}
+
+// Envoie la requête ; sur 401, renouvelle la session (sauf si c'est déjà fait) puis réessaie une fois
+async function withAuth(send) {
+  const sentWith = accessToken
+  try {
+    return (await send()).data.data
+  } catch (err) {
+    if (err.response?.status !== 401) throw err
+    if (accessToken === sentWith && !(await renewSession())) throw err
+    return (await send()).data.data
   }
 }
 
@@ -55,24 +123,14 @@ export async function getMe(token) {
   return data.data
 }
 
-async function request(method, path, body = null, params = null) {
-  const call = () => axios({
+function request(method, path, body = null, params = null) {
+  return withAuth(() => axios({
     method,
     url: `${BASE_URL}${path}`,
-    headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {},
+    headers: authHeaders(),
     data: body,
     params
-  })
-  try {
-    return (await call()).data.data
-  } catch (err) {
-    if (err.response?.status === 401) {
-      const refreshed = await tryRefresh()
-      if (refreshed) return (await call()).data.data
-      if (onExpiredCallback) onExpiredCallback()
-    }
-    throw err
-  }
+  }))
 }
 
 export const getReservations = (params = {}) =>
@@ -434,18 +492,6 @@ export const removeProductImage = (id) =>
   request('DELETE', `/items/produits_images/${id}`)
 
 // ── File upload ────────────────────────────────────────────────────────────────
-export async function uploadFile(formData) {
-  const call = () => axios.post(`${BASE_URL}/files`, formData, {
-    headers: accessToken ? { Authorization: `Bearer ${accessToken}` } : {},
-  })
-  try {
-    return (await call()).data.data
-  } catch (err) {
-    if (err.response?.status === 401) {
-      const refreshed = await tryRefresh()
-      if (refreshed) return (await call()).data.data
-      if (onExpiredCallback) onExpiredCallback()
-    }
-    throw err
-  }
+export function uploadFile(formData) {
+  return withAuth(() => axios.post(`${BASE_URL}/files`, formData, { headers: authHeaders() }))
 }

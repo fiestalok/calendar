@@ -4,7 +4,7 @@ import router from './router'
 import './style.css'
 import App from './App.vue'
 import { useAuthStore } from './stores/auth'
-import { setOnExpired, setOnRefresh } from './api/directus'
+import { setOnExpired, setOnRefresh, setTokenLoader } from './api/directus'
 
 const app = createApp(App)
 const pinia = createPinia()
@@ -14,7 +14,8 @@ app.use(router)
 
 const auth = useAuthStore()
 setOnExpired(() => { auth.logout(); router.push('/login') })
-setOnRefresh((access, refresh) => auth.updateTokens(access, refresh))
+setOnRefresh((access, refresh, expires) => auth.updateTokens(access, refresh, expires))
+setTokenLoader(() => auth.storedTokens())
 
 router.beforeEach((to) => {
   const requiresAuth = to.matched.some(r => r.meta?.requiresAuth)

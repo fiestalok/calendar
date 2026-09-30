@@ -11,7 +11,7 @@ function loadSession() {
 export const useAuthStore = defineStore('auth', {
   state: () => {
     const s = loadSession()
-    if (s?.access) setTokens(s.access, s.refresh)
+    if (s?.access) setTokens(s.access, s.refresh, s.expires)
     return {
       user: s?.user ?? null,
       accessToken: s?.access ?? null,
@@ -34,20 +34,24 @@ export const useAuthStore = defineStore('auth', {
   },
   actions: {
     async login(email, password) {
-      const { access_token, refresh_token } = await loginDirectus(email, password)
+      const { access_token, refresh_token, expires } = await loginDirectus(email, password)
       const user = await getMe(access_token)
-      this._save(user, access_token, refresh_token)
+      this._save(user, access_token, refresh_token, Date.now() + expires)
     },
-    _save(user, access, refresh) {
+    _save(user, access, refresh, expires) {
       this.user = user
       this.accessToken = access
-      localStorage.setItem(STORAGE_KEY, JSON.stringify({ user, access, refresh }))
-      setTokens(access, refresh)
+      localStorage.setItem(STORAGE_KEY, JSON.stringify({ user, access, refresh, expires }))
+      setTokens(access, refresh, expires)
     },
-    updateTokens(access, refresh) {
+    updateTokens(access, refresh, expires) {
       this.accessToken = access
       const s = loadSession()
-      if (s) localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...s, access, refresh }))
+      if (s) localStorage.setItem(STORAGE_KEY, JSON.stringify({ ...s, access, refresh, expires }))
+    },
+    // Jetons enregistrés (partagés entre onglets)
+    storedTokens() {
+      return loadSession()
     },
     logout() {
       this.user = null
