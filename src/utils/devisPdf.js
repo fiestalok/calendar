@@ -1,16 +1,7 @@
 import { addDays, format, parseISO } from 'date-fns'
 import { fr } from 'date-fns/locale'
-
-// ── Identité (mentions légales de hoplalok.fr) ───────────────────────────────
-export const ENTREPRISE = {
-  nom:       "Hoplalo'K",
-  adresse:   '5 rue du maire Sorgus, 67300 Schiltigheim',
-  siret:     '108 736 497 00018',
-  telephone: '06 79 51 59 25',
-  email:     'contact@fiestalok.fr',
-  site:      'hoplalok.fr',
-  instagram: '@hoplalok',
-}
+import { ENTREPRISE } from './entreprise.js'
+import { CGV } from './cgv.js'
 
 // ── Charte graphique de hoplalok.fr ──────────────────────────────────────────
 const INK      = [45, 52, 54]     // --color-ink      #2d3436
@@ -58,20 +49,21 @@ export async function loadDevisFonts(baseUrl) {
 }
 
 /**
- * Génère les pages du devis (sans les CGV) et renvoie un ArrayBuffer.
+ * Génère le devis suivi des conditions générales de location (voir cgv.js)
+ * et renvoie un ArrayBuffer.
  *
  * devis = {
  *   numero, dateEmission,
  *   client: { societe, prenom, nom, adresse, codePostal, ville, telephone, email },
  *   debut, fin, lieu, livraison,
  *   lignes: [{ designation, detail?, quantite, prixTTC }],  // prixTTC null = prix inconnu
- *   avecTVA, notes, cgvJointes,
+ *   avecTVA, notes,
  * }
  * fonts = { bangers, nunito, nunitoBold } en base64 (voir loadDevisFonts)
  */
 export async function buildDevisPdf(devis, fonts = {}) {
   const { jsPDF } = await import('jspdf')
-  const doc = new jsPDF({ unit: 'mm', format: 'a4' })
+  const doc = new jsPDF({ unit: 'mm', format: 'a4', compress: true })
   const F   = registerFonts(doc, fonts)
   const avecTVA = devis.avecTVA !== false
 
@@ -97,6 +89,12 @@ export async function buildDevisPdf(devis, fonts = {}) {
     return kept
   }
   const label = (str, x, ty, size = 12) => text(str, x, ty, { font: 'display', size, color: CORAL })
+  // Taille réduite si le texte dépasse `maxWidth` (utile avec la police de secours)
+  const fitSize = (str, font, size, maxWidth) => {
+    doc.setFont(...F[font]); doc.setFontSize(size)
+    const w = doc.getTextWidth(str)
+    return w > maxWidth ? size * maxWidth / w : size
+  }
 
   const withOpacity = (opacity, draw) => {
     doc.saveGraphicsState()
@@ -132,10 +130,11 @@ export async function buildDevisPdf(devis, fonts = {}) {
     text("'K", x + doc.getTextWidth('HOPLALO'), wy, { font: 'display', size, color: colorK })
   }
 
+  let caption = `Devis n° ${devis.numero} (suite)`
   const newPage = () => {
     doc.addPage()
     gradient(0, 5)
-    text(`Devis n° ${devis.numero} (suite)`, W - M, 12, { font: 'bold', size: 8, color: INK_SOFT, align: 'right' })
+    text(caption, W - M, 12, { font: 'bold', size: 8, color: INK_SOFT, align: 'right' })
     y = 19
   }
   const ensureSpace = (h, onNewPage) => {
@@ -144,18 +143,22 @@ export async function buildDevisPdf(devis, fonts = {}) {
     onNewPage?.()
   }
 
-  // ── EN-TÊTE ───────────────────────────────────────────────────────────────
-  gradient(0, HEADER_H)
-  withOpacity(0.22, () => {
-    doc.setFillColor(...WHITE)
-    for (const [cx, cy, r] of BULLES) doc.circle(cx, cy, r, 'F')
-  })
-  withOpacity(0.2, () => wordmark(M + 0.7, 24.4, 40, INK, INK))
-  wordmark(M, 23, 40, WHITE, YELLOW)
-  text('Location de matériel festif en Alsace', M, 30.5, { font: 'bold', size: 10, color: WHITE })
-  text('On livre, vous profitez.', M, 35.5, { size: 9, color: WHITE })
-
+  // Bandeau de première page (devis et CGV) : dégradé, bulles, logotype
+  const headerBand = () => {
+    gradient(0, HEADER_H)
+    withOpacity(0.22, () => {
+      doc.setFillColor(...WHITE)
+      for (const [cx, cy, r] of BULLES) doc.circle(cx, cy, r, 'F')
+    })
+    withOpacity(0.2, () => wordmark(M + 0.7, 24.4, 40, INK, INK))
+    wordmark(M, 23, 40, WHITE, YELLOW)
+    text('Location de matériel festif en Alsace', M, 30.5, { font: 'bold', size: 10, color: WHITE })
+    text('On livre, vous profitez.', M, 35.5, { size: 9, color: WHITE })
+  }
   const cardW = 66, cardX = W - M - cardW - 1.4, cardY = 7, cardH = 28
+
+  // ── EN-TÊTE ───────────────────────────────────────────────────────────────
+  headerBand()
   sticker(cardX, cardY, cardW, cardH, WHITE)
   text('DEVIS', cardX + 6, cardY + 12, { font: 'display', size: 24 })
   text(`N° ${devis.numero}`, cardX + cardW - 6, cardY + 12, { font: 'display', size: 15, color: CORAL, align: 'right' })
@@ -283,8 +286,8 @@ export async function buildDevisPdf(devis, fonts = {}) {
 
   const conditions = [
     `Devis valable ${VALIDITE_JOURS} jours, jusqu'au ${validite}.`,
-    devis.cgvJointes && 'Nos conditions générales de location sont jointes à ce devis.',
-  ].filter(Boolean).map(cond => wrap(cond, leftW - 4, 'body', 8.5))
+    'Nos conditions générales de location suivent ce devis.',
+  ].map(cond => wrap(cond, leftW - 4, 'body', 8.5))
   const notes       = (devis.notes ?? '').replace(/→/g, '->').replace(/←/g, '<-').trim()
   const shortNotes  = notes ? wrap(notes, leftW, 'body', 8.5) : []
   const notesBeside = shortNotes.length > 0 && shortNotes.length <= NOTES_BESIDE_MAX
@@ -308,6 +311,10 @@ export async function buildDevisPdf(devis, fonts = {}) {
   text(avecTVA ? 'TOTAL TTC' : 'TOTAL', totX + 6, ty + 9.5, { font: 'display', size: 16 })
   text(eur(totalTTC), totX + totW - 6, ty + 10, { font: 'display', size: 20, align: 'right' })
   ty += 14 + 1.4
+  if (!avecTVA) {
+    text('TVA non applicable, article 293 B du CGI', totX + totW, ty + 4.5, { size: 7.8, color: INK_SOFT, align: 'right' })
+    ty += 6
+  }
 
   let ly = top + 5
   label('BON À SAVOIR', M, ly, 11)
@@ -323,10 +330,11 @@ export async function buildDevisPdf(devis, fonts = {}) {
     ly += 6
     shortNotes.forEach(l => { text(l, M, ly, { size: 8.5, color: INK_SOFT }); ly += 4.2 })
   }
-  y = Math.max(ty, ly) + 7
+  y = Math.max(ty, ly) + 4
 
   // ── NOTES LONGUES (pleine largeur, sur plusieurs pages si besoin) ─────────
   if (notes && !notesBeside) {
+    y += 3
     const noteLines = wrap(notes, INNER - 12, 'body', 9)
     let i = 0
     while (i < noteLines.length) {
@@ -356,6 +364,65 @@ export async function buildDevisPdf(devis, fonts = {}) {
     label(titre, x + 6, sigY + 8)
     text(consigne, x + 6, sigY + 13, { size: 7.8, color: INK_SOFT })
   })
+
+  // ── CONDITIONS GÉNÉRALES DE LOCATION (texte dans cgv.js) ──────────────────
+  doc.addPage()
+  caption = `${CGV.titre} (suite)`
+  headerBand()
+  sticker(cardX, cardY, cardW, cardH, WHITE)
+  const cgvTitleSize = fitSize('CONDITIONS GÉNÉRALES', 'display', 17, cardW - 12)
+  text('CONDITIONS GÉNÉRALES', cardX + 6, cardY + 10.5, { font: 'display', size: cgvTitleSize })
+  text('DE LOCATION', cardX + 6, cardY + 17, { font: 'display', size: cgvTitleSize, color: CORAL })
+  doc.setDrawColor(...BORDER); doc.setLineWidth(0.3)
+  doc.line(cardX + 6, cardY + 20.5, cardX + cardW - 6, cardY + 20.5)
+  text(`Mise à jour : ${CGV.miseAJour}`, cardX + 6, cardY + 25, { size: 8, color: INK_SOFT })
+  y = HEADER_H + 4
+
+  const preambule = CGV.preambule.map(p => wrap(p, INNER - 12, 'body', 8.3))
+  const preLines  = preambule.reduce((n, rows) => n + rows.length, 0)
+  const preH      = 6.5 + (preLines - 1) * 3.8 + (preambule.length - 1) * 1 + 3
+  card(M, y, INNER, preH)
+  let py = y + 6.5
+  for (const rows of preambule) {
+    rows.forEach(l => { text(l, M + 6, py, { size: 8.3 }); py += 3.8 })
+    py += 1
+  }
+  y += preH + 1.2
+
+  // Articles sur deux colonnes : on remplit la gauche, puis la droite, puis la page suivante
+  const COL_GAP = 8, COL_W = (INNER - COL_GAP) / 2, CGV_LH = 3.05
+  let col = 0, colTop = y
+  const colX = () => M + col * (COL_W + COL_GAP)
+  const room = (h) => {
+    if (y + h <= CONTENT_BOTTOM) return
+    if (col === 0) { col = 1; y = colTop }
+    else { newPage(); col = 0; colTop = y }
+  }
+  const paragraph = (str, font) => {
+    for (const l of wrap(str, COL_W, font, 7.6)) {
+      room(CGV_LH)
+      y += CGV_LH
+      text(l, colX(), y, { font, size: 7.6, color: font === 'bold' ? INK : INK_SOFT })
+    }
+    y += 0.85
+  }
+
+  CGV.articles.forEach((article, i) => {
+    room(2.3 + 4.6 + 2 * CGV_LH)   // titre jamais seul en bas de colonne
+    y += (y === colTop ? 0 : 2.3) + 4.6
+    const titre = `ARTICLE ${i + 1} · ${article.titre.toUpperCase()}`
+    text(titre, colX(), y, { font: 'display', size: fitSize(titre, 'display', 10.5, COL_W), color: CORAL })
+    y += 0.5
+    for (const item of article.contenu) {
+      if (typeof item === 'string') { paragraph(item, 'body'); continue }
+      room(0.8 + 3 * CGV_LH)
+      y += 0.8 + CGV_LH
+      text(item.sousTitre, colX(), y, { font: 'bold', size: 7.8 })
+    }
+  })
+  room(2 + 2 * CGV_LH)
+  y += 2
+  paragraph(CGV.conclusion, 'bold')
 
   // ── PIED DE PAGE SUR TOUTES LES PAGES ─────────────────────────────────────
   const contact = [ENTREPRISE.telephone, ENTREPRISE.email, ENTREPRISE.site, ENTREPRISE.instagram].join('  ·  ')

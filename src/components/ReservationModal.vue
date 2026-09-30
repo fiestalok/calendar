@@ -43,7 +43,7 @@ const articles           = ref([])
 const selectedArticleIds = ref({})
 const articleLoading     = ref(false)
 const clientContacte     = ref(false)
-const avecTVA            = ref(true)
+const avecTVA            = ref(false)   // franchise en base de TVA (art. 293 B du CGI)
 const devisSigneFile     = ref(null)
 const devisSigneInput    = ref(null)
 const previewArticle     = ref(null)
@@ -434,19 +434,7 @@ async function generateDevis() {
   try {
     const r = props.reservation
     const c = client.value
-    const [{ buildDevisPdf, loadDevisFonts }, { PDFDocument }] = await Promise.all([
-      import('../utils/devisPdf'),
-      import('pdf-lib'),
-    ])
-
-    // CGV chargées en premier : le devis ne les annonce jointes que si elles le sont vraiment
-    let cgvPdf = null
-    try {
-      const cgvResp = await fetch(import.meta.env.BASE_URL + 'CGV_HopLaLok.pdf')
-      if (cgvResp.ok) cgvPdf = await PDFDocument.load(await cgvResp.arrayBuffer())
-    } catch {
-      cgvPdf = null
-    }
+    const { buildDevisPdf, loadDevisFonts } = await import('../utils/devisPdf')
 
     const lignes = produits.value.map(p => ({
       designation: p.produits_id?.name ?? '—',
@@ -473,7 +461,8 @@ async function generateDevis() {
       })
     }
 
-    const devisBytes = await buildDevisPdf({
+    // Devis + conditions générales de location dans un seul PDF
+    const pdfBytes = await buildDevisPdf({
       numero:       r.id,
       dateEmission: new Date(),
       client: {
@@ -493,22 +482,9 @@ async function generateDevis() {
       lignes,
       avecTVA:    avecTVA.value,
       notes:      r.notes,
-      cgvJointes: !!cgvPdf,
     }, await loadDevisFonts(import.meta.env.BASE_URL + 'fonts/'))
 
-    // ── FUSION AVEC CGV ───────────────────────────────────────────────────────
-    let finalBytes = devisBytes
-    if (cgvPdf) {
-      const merged = await PDFDocument.create()
-      const dPdf   = await PDFDocument.load(devisBytes)
-      const dPages = await merged.copyPages(dPdf, dPdf.getPageIndices())
-      dPages.forEach(pg => merged.addPage(pg))
-      const cPages = await merged.copyPages(cgvPdf, cgvPdf.getPageIndices())
-      cPages.forEach(pg => merged.addPage(pg))
-      finalBytes = await merged.save()
-    }
-
-    const blob = new Blob([finalBytes], { type: 'application/pdf' })
+    const blob = new Blob([pdfBytes], { type: 'application/pdf' })
     const fd   = new FormData()
     fd.append('file', blob, `devis-reservation-${r.id}.pdf`)
     const uploaded = await uploadFile(fd)
@@ -917,7 +893,7 @@ const devisEmailLink = computed(() => {
 
   lines.push(`Bonjour ${c.first_name} ${c.last_name},`)
   lines.push('')
-  lines.push('Veuillez trouver ci-dessous le récapitulatif de votre réservation Fiestalok.')
+  lines.push("Veuillez trouver ci-dessous le récapitulatif de votre réservation Hoplalo'K.")
   lines.push('')
   lines.push(`Période : du ${fmtDate(r.date_start)} au ${fmtDate(r.date_end)}`)
   lines.push('')
@@ -955,9 +931,9 @@ const devisEmailLink = computed(() => {
 
   lines.push("N'hésitez pas à nous contacter pour toute question.")
   lines.push('')
-  lines.push("L'équipe Fiestalok")
+  lines.push("L'équipe Hoplalo'K")
 
-  const subject = encodeURIComponent(`Votre devis Fiestalok – Réservation n°${r.id}`)
+  const subject = encodeURIComponent(`Votre devis Hoplalo'K – Réservation n°${r.id}`)
   const body    = encodeURIComponent(lines.join('\n'))
   return `mailto:${c.email}?subject=${subject}&body=${body}`
 })

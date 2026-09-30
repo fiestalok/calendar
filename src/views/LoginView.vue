@@ -38,7 +38,7 @@ async function submit() {
 
       <!-- Brand -->
       <div class="flex items-center gap-3 mb-8 justify-center">
-        <img :src="logoSrc" class="h-12 object-contain" alt="Fiestalok" />
+        <img :src="logoSrc" class="h-12 object-contain" alt="Hoplalo'K" />
         <div class="text-blue-300/55 text-xs font-medium">CRM Événementiel</div>
       </div>
 
