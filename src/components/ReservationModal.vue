@@ -201,16 +201,6 @@ watch(() => props.reservation?.status, () => { clientContacte.value = false; dev
 const client  = computed(() => props.reservation?.client)
 const fmtDate     = (d) => d ? format(parseISO(d), "EEEE d MMMM yyyy", { locale: fr }) : '—'
 const fmtTime     = (d) => { if (!d) return null; const dt = parseISO(d); const h = dt.getHours(); const m = dt.getMinutes(); return (h || m) ? `${String(h).padStart(2,'0')}h${m ? String(m).padStart(2,'0') : ''}` : null }
-const fmtDateLong = (d) => {
-  if (!d) return '—'
-  if (/^\d{4}-\d{2}-\d{2}$/.test(d)) return format(parseISO(d), "EEE. d MMM yyyy", { locale: fr })
-  const dt = parseISO(d)
-  const base = format(dt, "EEE. d MMM yyyy", { locale: fr })
-  const h = dt.getHours(); const min = dt.getMinutes()
-  if (h === 0 && min === 0) return base
-  return `${base} ${String(h).padStart(2,'0')}h${min ? String(min).padStart(2,'0') : ''}`
-}
-
 const clientInitials = computed(() => {
   const c = client.value
   if (!c) return '?'
@@ -431,8 +421,8 @@ const remiseMontantTTC = computed(() => {
 const remiseDescription = computed(() => {
   if (!remise.value) return ''
   return livraisonMontant.value <= 50
-    ? 'Livraison & installation offerts'
-    : 'Livraison & installation offerts (plafond 50 €)'
+    ? 'Livraison & installation offertes'
+    : 'Livraison & installation offertes (plafond 50 €)'
 })
 async function toggleRemise(val) {
   remise.value = val
@@ -442,363 +432,80 @@ async function toggleRemise(val) {
 async function generateDevis() {
   loading.value = 'generate_devis'
   try {
-    const logoImg = await new Promise((resolve, reject) => {
-      const img = new Image()
-      img.onload = () => {
-        const canvas = document.createElement('canvas')
-        canvas.width  = img.naturalWidth
-        canvas.height = img.naturalHeight
-        const ctx = canvas.getContext('2d')
-        ctx.fillStyle = '#155264'
-        ctx.fillRect(0, 0, canvas.width, canvas.height)
-        ctx.drawImage(img, 0, 0)
-        resolve(canvas.toDataURL('image/png'))
-      }
-      img.onerror = reject
-      img.src = import.meta.env.BASE_URL + 'Logo.png'
-    })
+    const r = props.reservation
+    const c = client.value
+    const [{ buildDevisPdf, loadDevisFonts }, { PDFDocument }] = await Promise.all([
+      import('../utils/devisPdf'),
+      import('pdf-lib'),
+    ])
 
-    const { jsPDF } = await import('jspdf')
-    const doc = new jsPDF({ unit: 'mm', format: 'a4' })
-
-    const FONT = 'helvetica'
-    const r   = props.reservation
-    const c   = client.value
-    const now = format(new Date(), 'dd/MM/yyyy')
-    const W = 210, M = 10, INNER = 190, pageH = 297, TVA = 0.20
-    const withTVA = avecTVA.value
-    const FOOTER_H = 22, USABLE = pageH - FOOTER_H - 4
-
-    const TEAL     = [21, 82, 100]
-    const CARD_BG  = [226, 234, 240]
-    const CARD_TOP = [247, 251, 255]
-    const CBORD    = [196, 210, 222]
-    const LGREY  = [200, 200, 205]
-    const DGREY  = [100, 100, 110]
-    const BLACK  = [60, 65, 75]
-    const WHITE  = [255, 255, 255]
-
-    let y = 0
-    const addPage   = () => { doc.addPage(); y = 14 }
-    const checkPage = (n = 10) => { if (y + n > USABLE) addPage() }
-    const setColor  = (rgb) => doc.setTextColor(...rgb)
-
-    // ── Helpers ───────────────────────────────────────────────────────────────
-    let sectionNum = 0
-    const sectionHeader = (title) => {
-      checkPage(10); y += 1
-      sectionNum++
-      doc.setFillColor(...TEAL)
-      doc.roundedRect(M, y, INNER, 8, 2, 2, 'F')
-      doc.rect(M, y + 6, INNER, 2, 'F')
-      doc.setFontSize(11); doc.setFont(FONT, 'bold'); setColor(WHITE)
-      doc.text(`${sectionNum}. ${title.toUpperCase()}`, M + 4, y + 5.5)
-      y += 8
+    // CGV chargées en premier : le devis ne les annonce jointes que si elles le sont vraiment
+    let cgvPdf = null
+    try {
+      const cgvResp = await fetch(import.meta.env.BASE_URL + 'CGV_HopLaLok.pdf')
+      if (cgvResp.ok) cgvPdf = await PDFDocument.load(await cgvResp.arrayBuffer())
+    } catch {
+      cgvPdf = null
     }
 
-    const drawTable = (cols, rows) => {
-      const PAD_H = 2, headerH = PAD_H * 2 + 3
-      checkPage(headerH + 6)
-      doc.setFillColor(...CARD_BG); doc.rect(M, y, INNER, headerH, 'F')
-      doc.setFontSize(8.5); doc.setFont(FONT, 'bold'); setColor(TEAL)
-      for (const col of cols) {
-        const align = col.align ?? 'left'
-        doc.text(col.label, align === 'right' ? col.x + col.w - 2 : col.x + 2, y + PAD_H + 2, { align })
-      }
-      y += headerH
-      for (let ri = 0; ri < rows.length; ri++) {
-        const row    = rows[ri]
-        const isLast = ri === rows.length - 1
-        const cells  = row.cells ?? row
-        const sub    = row.subtitle ?? null
-        const rowH   = sub ? 12 : 8
-        checkPage(rowH + 2)
-        doc.setFillColor(248, 250, 252)
-        if (isLast) {
-          doc.roundedRect(M, y, INNER, rowH, 2, 2, 'F')
-          doc.rect(M, y, INNER, 2, 'F')
-        } else {
-          doc.rect(M, y, INNER, rowH, 'F')
-        }
-        doc.setDrawColor(...LGREY); doc.setLineWidth(0.15)
-        doc.line(M, y + rowH, M + INNER, y + rowH)
-        doc.setFontSize(10); doc.setFont(FONT, 'normal')
-        for (let i = 0; i < cols.length; i++) {
-          const col = cols[i]; const cell = String(cells[i] ?? '—')
-          const align = col.align ?? 'left'
-          const tx = align === 'right' ? col.x + col.w - 2 : col.x + 2
-          setColor(cell.startsWith('-') && col.align === 'right' ? [214, 54, 59] : BLACK)
-          doc.text((doc.splitTextToSize(cell, col.w - 4)[0] ?? cell), tx, sub ? y + 5 : y + 5.5, { align })
-        }
-        if (sub) { doc.setFontSize(9); doc.setFont(FONT, 'italic'); setColor(DGREY); doc.text(sub, cols[0].x + 2, y + 10) }
-        y += rowH
-      }
-      y += 3
-    }
-
-    const drawCardHeader = (bx, bW, label) => {
-      doc.setFontSize(9); doc.setFont(FONT, 'bold'); setColor(TEAL)
-      doc.text(label, bx + 5, y + 5.5)
-    }
-
-    // ── HEADER BAND (28mm) ────────────────────────────────────────────────────
-    const HEADER_H = 32
-    const logoW = 50, logoH = 26
-    doc.setFillColor(...TEAL); doc.rect(0, 0, W, HEADER_H, 'F')
-    doc.addImage(logoImg, 'PNG', M, 0, logoW, logoH)
-    doc.setFontSize(22); doc.setFont(FONT, 'bold'); setColor(WHITE)
-    doc.text('DEVIS', W - M, 16, { align: 'right' })
-    doc.setFontSize(8); doc.setFont(FONT, 'normal'); setColor([190, 220, 235])
-    doc.text(`N° ${r.id}  •  Émis le ${now}`, W - M, 23, { align: 'right' })
-    y = HEADER_H + 5
-
-    // ── INFO : 3 cards (CLIENT | PÉRIODE | LOGISTIQUE) ───────────────────────
-    const GAP = 6
-    const cW_c = 58, cW_p = 52, cW_l = INNER - cW_c - cW_p - GAP * 2
-    const x_p  = M + cW_c + GAP
-    const x_l  = x_p + cW_p + GAP
-
-    const fullName = `${c?.first_name ?? ''} ${c?.last_name ?? ''}`.trim()
-    const cLines = [
-      c?.company_name ? { t: c.company_name, bold: true,  sz: 10 } : null,
-      fullName        ? { t: fullName, bold: !c?.company_name, sz: 9.5 } : null,
-      c?.phone        ? { t: c.phone,  bold: false, sz: 9 } : null,
-      c?.email        ? { t: c.email,  bold: false, sz: 8.5 }   : null,
-      (c?.zip_code || c?.city) ? { t: [c?.zip_code, c?.city].filter(Boolean).join(' '), bold: false, sz: 9 } : null,
-    ].filter(Boolean)
-    const PAD  = 5
-    const cardH = Math.max(28, 9 + cLines.length * 5.5 + 3)
-
-    // CLIENT card
-    doc.setFillColor(...CARD_TOP); doc.setDrawColor(...CBORD); doc.setLineWidth(0.25)
-    doc.roundedRect(M, y, cW_c, cardH, 1.5, 1.5, 'FD')
-    drawCardHeader(M, cW_c, 'CLIENT')
-    let cy = y + 12
-    for (const l of cLines) {
-      doc.setFontSize(l.sz); doc.setFont(FONT, 'normal'); setColor(BLACK)
-      doc.text(l.t, M + PAD, cy); cy += 5
-    }
-
-    // PÉRIODE card
-    doc.setFillColor(...CARD_TOP); doc.setDrawColor(...CBORD)
-    doc.roundedRect(x_p, y, cW_p, cardH, 1.5, 1.5, 'FD')
-    drawCardHeader(x_p, cW_p, 'PÉRIODE')
-    doc.setFontSize(9); doc.setFont(FONT, 'normal'); setColor(BLACK)
-    doc.text('Début :', x_p + PAD, y + 12)
-    doc.text(fmtDateLong(r.date_start), x_p + PAD, y + 17)
-    doc.text('Fin :', x_p + PAD, y + 23)
-    doc.text(fmtDateLong(r.date_end), x_p + PAD, y + 28)
-
-    // LOGISTIQUE card
-    doc.setFillColor(...CARD_TOP); doc.setDrawColor(...CBORD)
-    doc.roundedRect(x_l, y, cW_l, cardH, 1.5, 1.5, 'FD')
-    drawCardHeader(x_l, cW_l, 'LOGISTIQUE')
-    let ly = y + 12
-    doc.setFontSize(9); doc.setFont(FONT, 'normal'); setColor(BLACK)
-    doc.text(`Livraison : ${livraison.value ? 'Oui' : 'Non'}`, x_l + PAD, ly); ly += 5
-    if (livraison.value) {
-      doc.text('Installation : Oui', x_l + PAD, ly); ly += 5
-    }
-    if (r.delivery_address) {
-      const addrParts = r.delivery_address.split('\n').map(l => l.trim()).filter(Boolean)
-      const addrText  = `Lieu : ${addrParts[0] ?? ''}`
-      const addrLines = doc.splitTextToSize(addrText, cW_l - PAD * 2)
-      doc.text(addrLines.slice(0, 2), x_l + PAD, ly)
-      ly += addrLines.slice(0, 2).length * 5
-    }
-    y += cardH + 3
-
-    // ── 1. PRODUITS ───────────────────────────────────────────────────────────
-    sectionHeader('Produits réservés')
-    drawTable(withTVA ? [
-      { label: 'Produit',           x: M,       w: 65 },
-      { label: 'Qté',               x: M + 65,  w: 15, align: 'right' },
-      { label: 'Prix unitaire HT',  x: M + 80,  w: 37, align: 'right' },
-      { label: 'Prix unitaire TTC', x: M + 117, w: 37, align: 'right' },
-      { label: 'Sous-total TTC',    x: M + 154, w: 36, align: 'right' },
-    ] : [
-      { label: 'Produit',           x: M,       w: 100 },
-      { label: 'Qté',               x: M + 100, w: 15, align: 'right' },
-      { label: 'Prix unitaire',     x: M + 115, w: 37, align: 'right' },
-      { label: 'Sous-total',        x: M + 152, w: 38, align: 'right' },
-    ], produits.value.map(p => {
-      const qty = p.quantity ?? 1
-      const ttc = p.unit_price ? Number(p.unit_price) : (p.produits_id?.price ? Number(p.produits_id.price) : null)
-      const ht  = ttc != null ? ttc / (1 + TVA) : null
-      const st  = ttc != null ? qty * ttc : null
-      return withTVA
-        ? [p.produits_id?.name ?? '—', qty, ht != null ? `${ht.toFixed(2)} €` : '—', ttc != null ? `${ttc.toFixed(2)} €` : '—', st != null ? `${st.toFixed(2)} €` : '—']
-        : [p.produits_id?.name ?? '—', qty, ttc != null ? `${ttc.toFixed(2)} €` : '—', st != null ? `${st.toFixed(2)} €` : '—']
+    const lignes = produits.value.map(p => ({
+      designation: p.produits_id?.name ?? '—',
+      quantite:    p.quantity ?? 1,
+      prixTTC:     p.unit_price ? Number(p.unit_price) : (p.produits_id?.price ? Number(p.produits_id.price) : null),
     }))
-
-    // ── 2. LIVRAISON ET INSTALLATION ─────────────────────────────────────────
     if (livraison.value) {
-      sectionHeader('Livraison et Installation')
-      const fee   = livraisonMontant.value
-      const feeHT = fee / 1.2
-      const zone  = distanceKm.value <= 15 ? '0–15 km' : distanceKm.value <= 30 ? '15–30 km'
-                  : distanceKm.value <= 50 ? '30–50 km' : distanceKm.value <= 80 ? '50–80 km'
-                  : distanceKm.value <= 120 ? '80–120 km' : '> 120 km'
-      drawTable(withTVA ? [
-        { label: 'Zone',      x: M,       w: 120 },
-        { label: 'Tarif HT',  x: M + 120, w: 35, align: 'right' },
-        { label: 'Tarif TTC', x: M + 155, w: 35, align: 'right' },
-      ] : [
-        { label: 'Zone',      x: M,       w: 155 },
-        { label: 'Tarif',     x: M + 155, w: 35, align: 'right' },
-      ], [{ cells: withTVA ? [`Forfait ${zone}`, `${feeHT.toFixed(2)} €`, `${fee.toFixed(2)} €`] : [`Forfait ${zone}`, `${fee.toFixed(2)} €`], subtitle: 'Livraison, installation & déinstallation incluses' }])
+      const km   = distanceKm.value
+      const zone = km <= 15 ? '0–15 km' : km <= 30 ? '15–30 km' : km <= 50 ? '30–50 km'
+                 : km <= 80 ? '50–80 km' : km <= 120 ? '80–120 km' : '> 120 km'
+      lignes.push({
+        designation: `Livraison & installation — forfait ${zone}`,
+        detail:      'Livraison, installation et désinstallation incluses',
+        quantite:    1,
+        prixTTC:     livraisonMontant.value,
+      })
+    }
+    if (remiseMontantTTC.value > 0) {
+      lignes.push({
+        designation: 'Remise connaissance',
+        detail:      remiseDescription.value,
+        quantite:    1,
+        prixTTC:     -remiseMontantTTC.value,
+      })
     }
 
-    // ── Calculs financiers ────────────────────────────────────────────────────
-    let soustotalTTC = produits.value.reduce((acc, p) => {
-      const qty = p.quantity ?? 1
-      const ttc = p.unit_price ? Number(p.unit_price) : (p.produits_id?.price ? Number(p.produits_id.price) : 0)
-      return acc + qty * ttc
-    }, 0)
-    if (livraison.value) soustotalTTC += livraisonMontant.value
-    const remiseTTC = remiseMontantTTC.value
-    const totalTTC  = soustotalTTC - remiseTTC
-    const totalHT   = totalTTC / 1.2
-    const remiseHT  = remiseTTC / 1.2
-    const tvaAmt    = totalTTC - totalHT
-
-    // ── 3. REMISE CONNAISSANCE ────────────────────────────────────────────────
-    if (remiseTTC > 0) {
-      sectionHeader('Remise Connaissance')
-      drawTable(withTVA ? [
-        { label: 'Description', x: M,       w: 120 },
-        { label: 'Montant HT',  x: M + 120, w: 35, align: 'right' },
-        { label: 'Montant TTC', x: M + 155, w: 35, align: 'right' },
-      ] : [
-        { label: 'Description', x: M,       w: 155 },
-        { label: 'Montant',     x: M + 155, w: 35, align: 'right' },
-      ], [withTVA
-        ? [remiseDescription.value, `-${remiseHT.toFixed(2)} €`, `-${remiseTTC.toFixed(2)} €`]
-        : [remiseDescription.value, `-${remiseTTC.toFixed(2)} €`]
-      ])
-    }
-
-    // ── RÉCAPITULATIF ─────────────────────────────────────────────────────────
-    y += 8
-    checkPage(60)
-    const RED  = [214, 54, 59]
-    const sumX = W - M - 90, sumW = 90
-    const summaryRows = [
-      [withTVA ? 'Prix initial TTC' : 'Prix initial', `${soustotalTTC.toFixed(2)} €`, 'normal'],
-      ...(remiseTTC > 0 ? [['Remise', `-${remiseTTC.toFixed(2)} €`, 'remise']] : []),
-      [withTVA ? 'À payer (TTC)' : 'À payer',        `${totalTTC.toFixed(2)} €`,     'bold'  ],
-      ...(withTVA ? [
-        ['dont TVA 20 %', `${tvaAmt.toFixed(2)} €`, 'light'],
-        ['Total HT',      `${totalHT.toFixed(2)} €`, 'light'],
-      ] : []),
-    ]
-    const rowHFor = (t) => t === 'bold' ? 11 : t === 'light' ? 5.5 : 8
-    const totalSumH = summaryRows.reduce((h, [,, t]) => h + rowHFor(t), 0)
-    const sumStartY = y
-    // Fond blanc arrondi pour masquer les débordements de coins
-    doc.setFillColor(255, 255, 255); doc.roundedRect(sumX, sumStartY, sumW, totalSumH, 2, 2, 'F')
-    for (let ri = 0; ri < summaryRows.length; ri++) {
-      const [label, val, type] = summaryRows[ri]
-      const nextType = summaryRows[ri + 1]?.[2]
-      const isLast = ri === summaryRows.length - 1
-      const rH = rowHFor(type)
-      if (type === 'bold') {
-        doc.setFillColor(...TEAL)
-        if (isLast) {
-          // Coins bas arrondis pour suivre le contour de la boîte
-          doc.roundedRect(sumX, y, sumW, rH, 2, 2, 'F')
-          doc.rect(sumX, y, sumW, 3, 'F') // couvre les coins arrondis du haut
-        } else {
-          doc.rect(sumX, y, sumW, rH, 'F')
-        }
-        doc.setFontSize(11); doc.setFont(FONT, 'bold'); setColor(WHITE)
-      } else if (type === 'light') {
-        doc.setFillColor(238, 241, 246); doc.rect(sumX, y, sumW, rH, 'F')
-        if (nextType) { doc.setDrawColor(...LGREY); doc.setLineWidth(0.1); doc.line(sumX, y + rH, sumX + sumW, y + rH) }
-        doc.setFontSize(8); doc.setFont(FONT, 'normal'); setColor(DGREY)
-      } else if (type === 'remise') {
-        doc.setFillColor(255, 255, 255); doc.rect(sumX, y, sumW, rH, 'F')
-        if (nextType && nextType !== 'bold') { doc.setDrawColor(...LGREY); doc.setLineWidth(0.1); doc.line(sumX, y + rH, sumX + sumW, y + rH) }
-        doc.setFontSize(10); doc.setFont(FONT, 'bold'); setColor(RED)
-      } else {
-        doc.setFillColor(255, 255, 255); doc.rect(sumX, y, sumW, rH, 'F')
-        if (nextType && nextType !== 'bold') { doc.setDrawColor(...LGREY); doc.setLineWidth(0.1); doc.line(sumX, y + rH, sumX + sumW, y + rH) }
-        doc.setFontSize(10); doc.setFont(FONT, 'normal'); setColor(BLACK)
-      }
-      const tY = type === 'bold' ? y + 7.5 : type === 'light' ? y + 4 : y + 5.5
-      doc.text(label, sumX + 4, tY)
-      doc.text(val,   sumX + sumW - 4, tY, { align: 'right' })
-      y += rH
-    }
-    doc.setDrawColor(...CBORD); doc.setLineWidth(0.3)
-    doc.roundedRect(sumX, sumStartY, sumW, totalSumH, 2, 2, 'S')
-    y += 6
-
-    if (r.notes) {
-      checkPage(14)
-      doc.setFillColor(...CARD_BG); doc.roundedRect(M, y, INNER, 5.5, 1, 1, 'F')
-      doc.setFontSize(9); doc.setFont(FONT, 'bold'); setColor(TEAL)
-      doc.text('NOTES', M + 3, y + 4); y += 7
-      doc.setFontSize(9); doc.setFont(FONT, 'normal'); setColor([40, 40, 50])
-      const noteLines = doc.splitTextToSize(r.notes.replace(/→/g, '->').replace(/←/g, '<-'), INNER - 4)
-      checkPage(noteLines.length * 4.5 + 4); doc.text(noteLines, M + 2, y)
-      y += noteLines.length * 4.5 + 4
-    }
-
-    // ── SIGNATURES (collées en bas de page) ───────────────────────────────────
-    const colW = (INNER - 4) / 2
-    const sigH = 28
-    const sigY = pageH - FOOTER_H - sigH - 10
-    if (y > sigY) addPage()
-    doc.setFillColor(...CARD_TOP); doc.setDrawColor(...CBORD); doc.setLineWidth(0.25)
-    doc.roundedRect(M,            sigY, colW, sigH, 1.5, 1.5, 'FD')
-    doc.roundedRect(M + colW + 4, sigY, colW, sigH, 1.5, 1.5, 'FD')
-    doc.setFontSize(9); doc.setFont(FONT, 'bold'); setColor(TEAL)
-    doc.text('LE CLIENT', M + 3, sigY + 5.5)
-    doc.text("FIESTALO'K", M + colW + 7, sigY + 5.5)
-    doc.setFontSize(8); doc.setFont(FONT, 'italic'); setColor(DGREY)
-    doc.text('Mention « Bon pour accord »', M + 3, sigY + 10)
-    doc.text('Date et signature',           M + 3, sigY + 15)
-    doc.text('Cachet et signature',         M + colW + 7, sigY + 10)
-
-    // ── FOOTER SUR TOUTES LES PAGES DEVIS ─────────────────────────────────────
-    const devisPageCount = doc.getNumberOfPages()
-    for (let p = 1; p <= devisPageCount; p++) {
-      doc.setPage(p)
-      doc.setFillColor(...TEAL); doc.rect(0, pageH - FOOTER_H, W, FOOTER_H, 'F')
-      const icoY = pageH - 15.5
-      const txtY = pageH - 9
-      doc.setFontSize(11); doc.setFont(FONT, 'normal'); setColor(WHITE)
-      doc.text('☎',  W * 0.2, icoY, { align: 'center' })
-      doc.text('⊕',  W * 0.5, icoY, { align: 'center' })
-      doc.text('✉',  W * 0.8, icoY, { align: 'center' })
-      doc.setFontSize(8); setColor(WHITE)
-      doc.text('06 61 00 50 39',   W * 0.2, txtY, { align: 'center' })
-      doc.text('www.hoplalok.fr', W * 0.5, txtY, { align: 'center' })
-      doc.text('@hoplalok',       W * 0.8, txtY, { align: 'center' })
-      doc.setFontSize(6.5); doc.setFont(FONT, 'italic'); setColor([180, 210, 225])
-      doc.text("Ce devis est valable 30 jours à compter de sa date d'émission", W / 2, pageH - 3.5, { align: 'center' })
-    }
+    const devisBytes = await buildDevisPdf({
+      numero:       r.id,
+      dateEmission: new Date(),
+      client: {
+        societe:    c?.company_name,
+        prenom:     c?.first_name,
+        nom:        c?.last_name,
+        adresse:    c?.address,
+        codePostal: c?.zip_code,
+        ville:      c?.city,
+        telephone:  c?.phone,
+        email:      c?.email,
+      },
+      debut:      r.date_start,
+      fin:        r.date_end,
+      lieu:       r.delivery_address,
+      livraison:  livraison.value,
+      lignes,
+      avecTVA:    avecTVA.value,
+      notes:      r.notes,
+      cgvJointes: !!cgvPdf,
+    }, await loadDevisFonts(import.meta.env.BASE_URL + 'fonts/'))
 
     // ── FUSION AVEC CGV ───────────────────────────────────────────────────────
-    const { PDFDocument } = await import('pdf-lib')
-    const devisBytes = doc.output('arraybuffer')
-    const dPdf = await PDFDocument.load(devisBytes)
-
-    let finalBytes
-    try {
-      const cgvResp  = await fetch(import.meta.env.BASE_URL + 'CGV_HopLaLok.pdf')
-      if (!cgvResp.ok) throw new Error('CGV not found')
-      const cgvBytes = await cgvResp.arrayBuffer()
-      const cgvPdf   = await PDFDocument.load(cgvBytes)
-      const merged   = await PDFDocument.create()
-      const dPages   = await merged.copyPages(dPdf, dPdf.getPageIndices())
+    let finalBytes = devisBytes
+    if (cgvPdf) {
+      const merged = await PDFDocument.create()
+      const dPdf   = await PDFDocument.load(devisBytes)
+      const dPages = await merged.copyPages(dPdf, dPdf.getPageIndices())
       dPages.forEach(pg => merged.addPage(pg))
-      const cPages   = await merged.copyPages(cgvPdf, cgvPdf.getPageIndices())
+      const cPages = await merged.copyPages(cgvPdf, cgvPdf.getPageIndices())
       cPages.forEach(pg => merged.addPage(pg))
       finalBytes = await merged.save()
-    } catch {
-      finalBytes = await dPdf.save()
     }
 
     const blob = new Blob([finalBytes], { type: 'application/pdf' })

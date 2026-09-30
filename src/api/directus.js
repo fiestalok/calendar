@@ -80,8 +80,8 @@ export const getReservations = (params = {}) =>
     fields: [
       'id', 'date_start', 'date_end', 'status', 'delivery',
       'delivery_address', 'total_price', 'notes',
-      'client.id', 'client.first_name', 'client.last_name',
-      'client.email', 'client.phone', 'client.city',
+      'client.id', 'client.first_name', 'client.last_name', 'client.company_name',
+      'client.email', 'client.phone', 'client.address', 'client.zip_code', 'client.city',
     ].join(','),
     sort: 'date_start',
     limit: -1,
