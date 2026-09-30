@@ -67,7 +67,7 @@ const NAV = [
   >
     <!-- ── Logo ── -->
     <div class="px-4 pt-5 pb-3 flex items-center gap-2.5">
-      <img :src="logoSrc" class="h-9 object-contain" alt="Fiestalok" />
+      <img :src="logoSrc" class="h-9 object-contain" alt="Hoplalo'K" />
       <div class="text-blue-300/60 text-[10px] font-medium tracking-wide">CRM Événementiel</div>
     </div>
 

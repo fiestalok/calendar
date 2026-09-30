@@ -12,7 +12,7 @@ const logoSrc = import.meta.env.BASE_URL + 'Logo.png'
 <template>
   <header class="navbar bg-base-100 shadow-sm sticky top-0 z-50 px-4">
     <div class="flex-1">
-      <img :src="logoSrc" class="h-8 object-contain" alt="Fiestalok" />
+      <img :src="logoSrc" class="h-8 object-contain" alt="Hoplalo'K" />
     </div>
     <nav class="flex-none flex items-center gap-2">
       <RouterLink
