@@ -420,7 +420,7 @@ async function saveDistance() {
 
 const produitsTotalTTC = computed(() =>
   produits.value.reduce((sum, p) => {
-    const price = p.unit_price ?? p.produits_id?.prix_location ?? 0
+    const price = p.unit_price ?? p.produits_id?.price ?? 0
     return sum + price * (p.quantity || 1)
   }, 0)
 )
@@ -623,7 +623,7 @@ async function generateDevis() {
       { label: 'Sous-total',        x: M + 152, w: 38, align: 'right' },
     ], produits.value.map(p => {
       const qty = p.quantity ?? 1
-      const ttc = p.unit_price ? Number(p.unit_price) : (p.produits_id?.prix_location ? Number(p.produits_id.prix_location) : null)
+      const ttc = p.unit_price ? Number(p.unit_price) : (p.produits_id?.price ? Number(p.produits_id.price) : null)
       const ht  = ttc != null ? ttc / (1 + TVA) : null
       const st  = ttc != null ? qty * ttc : null
       return withTVA
@@ -652,7 +652,7 @@ async function generateDevis() {
     // ── Calculs financiers ────────────────────────────────────────────────────
     let soustotalTTC = produits.value.reduce((acc, p) => {
       const qty = p.quantity ?? 1
-      const ttc = p.unit_price ? Number(p.unit_price) : (p.produits_id?.prix_location ? Number(p.produits_id.prix_location) : 0)
+      const ttc = p.unit_price ? Number(p.unit_price) : (p.produits_id?.price ? Number(p.produits_id.price) : 0)
       return acc + qty * ttc
     }, 0)
     if (livraison.value) soustotalTTC += livraisonMontant.value

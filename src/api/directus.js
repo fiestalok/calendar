@@ -100,7 +100,7 @@ export const getReservationsByClient = (clientId) =>
 export const getReservationProduits = (reservationId) =>
   request('GET', '/items/reservations_produits', null, {
     filter: { reservations_id: { _eq: reservationId } },
-    fields: 'produits_id.id,produits_id.name,produits_id.images_urls,produits_id.image,quantity,unit_price',
+    fields: 'produits_id.id,produits_id.name,produits_id.images_urls,produits_id.image,produits_id.price,quantity,unit_price',
     limit: -1,
   }).catch(err => { console.warn('[getReservationProduits]', err.message); return [] })
 
