@@ -308,8 +308,8 @@ export async function buildDevisPdf(devis, fonts = {}) {
   }
   if (totRows.length) ty += 3
   sticker(totX, ty, totW, 14, YELLOW)
-  text(avecTVA ? 'TOTAL TTC' : 'TOTAL', totX + 6, ty + 9.5, { font: 'display', size: 16 })
-  text(eur(totalTTC), totX + totW - 6, ty + 10, { font: 'display', size: 20, align: 'right' })
+  text(avecTVA ? 'TOTAL TTC' : 'TOTAL', totX + 6, ty + 9.2, { font: 'bold', size: 12 })
+  text(eur(totalTTC), totX + totW - 6, ty + 9.2, { font: 'bold', size: 16, align: 'right' })
   ty += 14 + 1.4
   if (!avecTVA) {
     text('TVA non applicable, article 293 B du CGI', totX + totW, ty + 4.5, { size: 7.8, color: INK_SOFT, align: 'right' })
