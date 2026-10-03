@@ -158,14 +158,14 @@ export const getReservationsByClient = (clientId) =>
 export const getReservationProduits = (reservationId) =>
   request('GET', '/items/reservations_produits', null, {
     filter: { reservations_id: { _eq: reservationId } },
-    fields: 'produits_id.id,produits_id.name,produits_id.images_urls,produits_id.image,produits_id.price,quantity,unit_price',
+    fields: 'id,produits_id.id,produits_id.name,produits_id.images_urls,produits_id.image,produits_id.price,quantity,unit_price',
     limit: -1,
   }).catch(err => { console.warn('[getReservationProduits]', err.message); return [] })
 
 export const getReservationArticles = (reservationId) =>
   request('GET', '/items/reservations_articles', null, {
     filter: { reservations_id: { _eq: reservationId } },
-    fields: 'id,articles_id.id,articles_id.type,articles_id.name,articles_id.reference,articles_id.notes,articles_id.etat,articles_id.produit_id.name,articles_id.entrepot_id.nom',
+    fields: 'id,articles_id.id,articles_id.type,articles_id.name,articles_id.reference,articles_id.notes,articles_id.etat,articles_id.produit_id.id,articles_id.produit_id.name,articles_id.entrepot_id.nom',
     limit: -1,
   }).catch(() => [])
 
@@ -200,11 +200,19 @@ export const getReservationValidation = (id) =>
     fields: 'devis_realise_par,devis_confirme_par,terminee_par,fichier_devis_signe,fichier_devis,fichier_facture,livraison,installation',
   }).catch(() => ({}))
 
+// Paramètres du devis enregistrés sur la réservation. Requête à part : tant que ces champs
+// n'existent pas dans Directus (voir update-directus-v5.mjs), elle échoue sans gêner le reste.
+export const getReservationDevisOptions = (id) =>
+  request('GET', `/items/reservations/${id}`, null, {
+    fields: 'distance_km,remise,remise_libelle,remise_montant',
+  }).catch(() => null)
+
 export const patchReservation = (id, data) =>
   request('PATCH', `/items/reservations/${id}`, data)
 
 export const createReservation = (data) => request('POST', '/items/reservations', data)
 export const createReservationProduit = (data) => request('POST', '/items/reservations_produits', data)
+export const deleteReservationProduit = (id) => request('DELETE', `/items/reservations_produits/${id}`)
 
 export const getClients = (params = {}) =>
   request('GET', '/items/clients', null, {

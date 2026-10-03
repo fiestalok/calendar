@@ -5,12 +5,13 @@ import { fr } from 'date-fns/locale'
 import { useRouter } from 'vue-router'
 import { useReservationsStore } from '../stores/reservations'
 import { useAuthStore } from '../stores/auth'
+import { useProduitsStore } from '../stores/produits'
 import {
-  getReservationProduits,
+  getReservationProduits, createReservationProduit, deleteReservationProduit,
   getReservationArticles, getReservationArticleIds,
   getArticlesForReservation, getArticlesByIds,
   deleteReservationArticle, createReservationArticle,
-  getReservationValidation, patchReservation,
+  getReservationValidation, getReservationDevisOptions, patchReservation,
   uploadFile, getFileUrl,
   getArticlesByProduit, getReservedArticleIdsForDates,
   getProduitGammes, getConsommablesByGammes, getGammes,
@@ -28,6 +29,7 @@ defineEmits(['close'])
 
 const store = useReservationsStore()
 const auth  = useAuthStore()
+const produitsStore = useProduitsStore()
 
 const loading         = ref(null)
 const toast           = ref(null)
@@ -37,7 +39,12 @@ const junctionIds     = ref([])
 const validatedBy     = ref({})
 const articlesError   = ref(false)
 const step            = ref('detail')
-// steps: 'detail' | 'article_select' | 'setup_list' | 'setup_article' | 'article_preview'
+// steps: 'detail' | 'product_add' | 'article_select' | 'setup_list' | 'setup_article' | 'article_preview'
+
+// Ajout d'un produit du catalogue à la réservation
+const addProduitId = ref(null)
+const addQuantite  = ref(1)
+const addSearch    = ref('')
 
 const articles           = ref([])
 const selectedArticleIds = ref({})
@@ -51,6 +58,8 @@ const livraison          = ref(false)
 const installation       = ref(false)
 const distanceKm         = ref(0)
 const remise             = ref(false)
+const remiseManuelleLibelle = ref('')
+const remiseManuelleMontant = ref(0)
 
 // ── Consommables & setup par article ─────────────────────────────────────────
 // { [produitId]: [{ gamme: {id,nom}, consoItems: [...], materielArts: [...] }] }
@@ -172,20 +181,25 @@ watch(() => props.reservation?.id, async (id) => {
   consoJunctionIds.value  = []
   gammesByProduit.value   = {}
   setupState.value        = {}
+  remiseManuelleLibelle.value = ''
+  remiseManuelleMontant.value = 0
   if (!id) { produits.value = []; validatedBy.value = {}; return }
 
   try {
-    const [rawP, rawV, rawConso] = await Promise.all([
+    const [rawP, rawV, rawConso, rawOptions] = await Promise.all([
       getReservationProduits(id),
       getReservationValidation(id),
       getReservationConsommables(id),
+      getReservationDevisOptions(id),
     ])
     produits.value         = rawP ?? []
     validatedBy.value      = rawV ?? {}
     livraison.value        = !!(rawV?.livraison)
     installation.value     = !!(rawV?.installation)
-    distanceKm.value       = rawV?.distance_km ?? 0
-    remise.value           = !!(rawV?.remise)
+    distanceKm.value       = rawOptions?.distance_km ?? 0
+    remise.value           = !!(rawOptions?.remise)
+    remiseManuelleLibelle.value = rawOptions?.remise_libelle ?? ''
+    remiseManuelleMontant.value = Number(rawOptions?.remise_montant) || 0
     reservationConso.value = rawConso ?? []
     consoJunctionIds.value = (rawConso ?? []).map(r => r.id).filter(Boolean)
   } catch (err) {
@@ -215,6 +229,9 @@ const signedDevisUrl = computed(() =>
 const devisGenereUrl = computed(() =>
   validatedBy.value.fichier_devis ? getFileUrl(validatedBy.value.fichier_devis) : null
 )
+
+// Message de confirmation, avec rappel si un devis déjà généré devient périmé
+const devisARegenerer = (msg) => devisGenereUrl.value ? `${msg} – pensez à regénérer le devis` : msg
 
 // ── Actions ───────────────────────────────────────────────────────────────────
 const actions = computed(() => {
@@ -410,13 +427,18 @@ async function saveDistance() {
 
 const produitsTotalTTC = computed(() =>
   produits.value.reduce((sum, p) => {
-    const price = p.unit_price ?? p.produits_id?.price ?? 0
+    const price = Number(p.unit_price) || Number(p.produits_id?.price) || 0
     return sum + price * (p.quantity || 1)
   }, 0)
 )
 const remiseMontantTTC = computed(() => {
   if (!remise.value) return 0
   return Math.min(livraisonMontant.value, 50)
+})
+// Remise manuelle, plafonnée pour que le total du devis ne devienne pas négatif
+const remiseManuelleTTC = computed(() => {
+  const plafond = Math.max(0, produitsTotalTTC.value + livraisonMontant.value - remiseMontantTTC.value)
+  return Math.min(Math.max(0, Number(remiseManuelleMontant.value) || 0), plafond)
 })
 const remiseDescription = computed(() => {
   if (!remise.value) return ''
@@ -427,6 +449,19 @@ const remiseDescription = computed(() => {
 async function toggleRemise(val) {
   remise.value = val
   await patchReservation(props.reservation.id, { remise: val }).catch(() => {})
+}
+async function saveRemiseManuelle() {
+  remiseManuelleMontant.value = Math.max(0, Number(remiseManuelleMontant.value) || 0)
+  try {
+    await patchReservation(props.reservation.id, {
+      remise_libelle: remiseManuelleLibelle.value.trim() || null,
+      remise_montant: remiseManuelleMontant.value || null,
+    })
+    showToast(devisARegenerer('Remise enregistrée'), 'success')
+  } catch {
+    // La remise reste appliquée au devis de cette session, mais sera perdue à la réouverture
+    showToast('Remise non enregistrée : champs à créer dans Directus', 'error')
+  }
 }
 
 async function generateDevis() {
@@ -458,6 +493,13 @@ async function generateDevis() {
         detail:      remiseDescription.value,
         quantite:    1,
         prixTTC:     -remiseMontantTTC.value,
+      })
+    }
+    if (remiseManuelleTTC.value > 0) {
+      lignes.push({
+        designation: remiseManuelleLibelle.value.trim() || 'Remise',
+        quantite:    1,
+        prixTTC:     -remiseManuelleTTC.value,
       })
     }
 
@@ -496,6 +538,86 @@ async function generateDevis() {
     const apiMsg = err?.response?.data?.errors?.[0]?.message ?? ''
     const isAuth = err?.response?.status === 401 || apiMsg.toLowerCase().includes('token')
     showToast(isAuth ? 'Session expirée – reconnectez-vous' : (apiMsg || err?.message || 'Erreur génération devis'), 'error')
+  } finally {
+    loading.value = null
+  }
+}
+
+// ── Ajout / retrait d'un produit ──────────────────────────────────────────────
+// Produits du catalogue qui ne sont pas encore dans la réservation
+const produitsAjoutables = computed(() => {
+  const dejaLa = new Set(produits.value.map(p => p.produits_id?.id))
+  const q = addSearch.value.toLowerCase().trim()
+  return produitsStore.produits.filter(p =>
+    !dejaLa.has(p.id) && p.statut !== 'archived' &&
+    (!q || p.nom.toLowerCase().includes(q) || p.categorie.toLowerCase().includes(q))
+  )
+})
+
+const produitAAjouter = computed(() =>
+  produitsStore.produits.find(p => p.id === addProduitId.value) ?? null
+)
+
+async function openProductAdd() {
+  addProduitId.value = null
+  addQuantite.value  = 1
+  addSearch.value    = ''
+  step.value = 'product_add'
+  await produitsStore.fetch()
+}
+
+// Répercute les produits de la réservation dans le planning (noms + jours bloqués)
+async function syncStoreProduits() {
+  await produitsStore.fetch()
+  const fields = { produit_noms: [...new Set(produits.value.map(p => p.produits_id?.name).filter(Boolean))] }
+  if (produitsStore.produits.length) {
+    const catalogue = Object.fromEntries(produitsStore.produits.map(p => [p.id, p]))
+    const lignes    = produits.value.map(p => catalogue[p.produits_id?.id]).filter(Boolean)
+    fields.jours_avant_max = Math.max(0, ...lignes.map(p => p.jours_avant))
+    fields.jours_apres_max = Math.max(0, ...lignes.map(p => p.jours_apres))
+  }
+  store.updateField(props.reservation.id, fields)
+}
+
+async function confirmProductAdd() {
+  const p = produitAAjouter.value
+  if (!p) return
+  loading.value = 'add_produit'
+  try {
+    const quantity = Math.max(1, Math.floor(Number(addQuantite.value) || 1))
+    // Prix du catalogue figé sur la ligne, comme pour les réservations venues du site
+    const created = await createReservationProduit({
+      reservations_id: props.reservation.id,
+      produits_id:     p.id,
+      quantity,
+      unit_price:      p.prix_location,
+    })
+    produits.value = [...produits.value, {
+      id:          created?.id,
+      quantity,
+      unit_price:  p.prix_location,
+      produits_id: { id: p.id, name: p.nom, images_urls: p.images_urls, image: p.image, price: p.prix_location },
+    }]
+    await syncStoreProduits()
+    step.value = 'detail'
+    showToast(devisARegenerer('Produit ajouté'), 'success')
+  } catch (err) {
+    showToast(err?.response?.data?.errors?.[0]?.message ?? err?.message ?? 'Erreur', 'error')
+  } finally {
+    loading.value = null
+  }
+}
+
+// Retrait possible tant qu'aucun article n'est affecté au produit
+async function removeProduit(item) {
+  loading.value = 'remove_produit'
+  try {
+    await deleteReservationProduit(item.id)
+    produits.value = produits.value.filter(p => p.id !== item.id)
+    await syncStoreProduits()
+    showToast(devisARegenerer('Produit retiré'), 'success')
+  } catch (err) {
+    showToast(err?.response?.data?.errors?.[0]?.message ?? err?.message ?? 'Erreur', 'error')
   } finally {
     loading.value = null
   }
@@ -587,6 +709,14 @@ const productArticleGroups = computed(() => {
   }
   return groups
 })
+
+// Articles liés dont le produit n'est pas dans la réservation : offerts, donc absents du devis
+const articlesSupplementaires = computed(() =>
+  linkedArticles.value.filter(la =>
+    la.article?.type !== 'secondaire' && la.article?.produit_id?.id &&
+    !productArticleGroups.value[la.article.produit_id.id]
+  )
+)
 
 async function confirmArticles() {
   loading.value = 'confirm_articles'
@@ -1020,6 +1150,7 @@ const showBackWarning         = ref(false)
 const showConfirmedBackWarning = ref(false)
 
 function handleBack() {
+  if (step.value === 'product_add')     { step.value = 'detail'; return }
   if (step.value === 'article_preview') { step.value = 'article_select'; return }
   if (step.value === 'article_select')  { postArticleSelectProduit.value = null; step.value = 'detail'; return }
   if (step.value === 'setup_article') {
@@ -1300,14 +1431,22 @@ async function confirmStepBack() {
               <div class="px-4 py-2.5 border-b border-blue-100 bg-blue-50 flex items-center gap-2">
                 <div class="w-0.5 h-3.5 bg-blue-400 rounded-full shrink-0"></div>
                 <span class="text-xs font-semibold text-gray-500 uppercase tracking-wide">Produits réservés</span>
-                <button v-if="reservation.status === 'en_attente' || reservation.status === 'devis_realise'"
-                  class="btn btn-xs btn-ghost ml-auto gap-1 text-base-content/50"
-                  @click="openArticleSelect()">
-                  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="w-3 h-3">
-                    <path d="M8.75 3.75a.75.75 0 0 0-1.5 0v3.5h-3.5a.75.75 0 0 0 0 1.5h3.5v3.5a.75.75 0 0 0 1.5 0v-3.5h3.5a.75.75 0 0 0 0-1.5h-3.5v-3.5Z"/>
-                  </svg>
-                  Modifier
-                </button>
+                <div v-if="reservation.status === 'en_attente' || reservation.status === 'devis_realise'"
+                  class="ml-auto flex items-center gap-1">
+                  <button class="btn btn-xs btn-ghost gap-1 text-base-content/50" @click="openProductAdd()">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="w-3 h-3">
+                      <path d="M8.75 3.75a.75.75 0 0 0-1.5 0v3.5h-3.5a.75.75 0 0 0 0 1.5h3.5v3.5a.75.75 0 0 0 1.5 0v-3.5h3.5a.75.75 0 0 0 0-1.5h-3.5v-3.5Z"/>
+                    </svg>
+                    Ajouter un produit
+                  </button>
+                  <button v-if="produits.length" class="btn btn-xs btn-ghost gap-1 text-base-content/50" @click="openArticleSelect()">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="w-3 h-3">
+                      <path d="M13.488 2.513a1.75 1.75 0 0 0-2.475 0L6.75 6.774a2.75 2.75 0 0 0-.596.892l-.848 2.047a.75.75 0 0 0 .98.98l2.047-.848a2.75 2.75 0 0 0 .892-.596l4.261-4.263a1.75 1.75 0 0 0 0-2.474Z"/>
+                      <path d="M4.75 3.5c-.69 0-1.25.56-1.25 1.25v6.5c0 .69.56 1.25 1.25 1.25h6.5c.69 0 1.25-.56 1.25-1.25V9a.75.75 0 0 1 1.5 0v2.25A2.75 2.75 0 0 1 11.25 14h-6.5A2.75 2.75 0 0 1 2 11.25v-6.5A2.75 2.75 0 0 1 4.75 2H7a.75.75 0 0 1 0 1.5H4.75Z"/>
+                    </svg>
+                    Modifier les articles
+                  </button>
+                </div>
               </div>
               <div class="p-3 space-y-0">
               <div v-if="!produits.length && (reservation.status === 'en_attente' || reservation.status === 'devis_realise')"
@@ -1317,9 +1456,9 @@ async function confirmStepBack() {
                     <path d="M8.75 3.75a.75.75 0 0 0-1.5 0v3.5h-3.5a.75.75 0 0 0 0 1.5h3.5v3.5a.75.75 0 0 0 1.5 0v-3.5h3.5a.75.75 0 0 0 0-1.5h-3.5v-3.5Z"/>
                   </svg>
                 </div>
-                <p class="text-sm text-base-content/40">Aucun article sélectionné</p>
-                <button class="btn btn-sm btn-primary mt-1" @click="openArticleSelect()">
-                  Sélectionner les articles
+                <p class="text-sm text-base-content/40">Aucun produit dans cette réservation</p>
+                <button class="btn btn-sm btn-primary mt-1" @click="openProductAdd()">
+                  Ajouter un produit
                 </button>
               </div>
               <div v-if="articlesError" class="alert alert-warning text-xs py-2 mb-2">
@@ -1358,10 +1497,19 @@ async function confirmStepBack() {
                         @click="openSetupForProduct(item.produits_id?.id)">
                         {{ productArticleGroups[item.produits_id?.id]?.principal?.length ? 'Modifier' : 'Configurer' }}
                       </button>
+                      <button v-if="item.id && !productArticleGroups[item.produits_id?.id]?.principal?.length
+                          && (reservation.status === 'en_attente' || reservation.status === 'devis_realise')"
+                        class="btn btn-xs btn-ghost btn-circle text-base-content/30 hover:text-error"
+                        title="Retirer ce produit de la réservation"
+                        :disabled="loading === 'remove_produit'"
+                        @click="removeProduit(item)">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="w-3.5 h-3.5">
+                          <path d="M5.28 4.22a.75.75 0 0 0-1.06 1.06L6.94 8l-2.72 2.72a.75.75 0 1 0 1.06 1.06L8 9.06l2.72 2.72a.75.75 0 1 0 1.06-1.06L9.06 8l2.72-2.72a.75.75 0 0 0-1.06-1.06L8 6.94 5.28 4.22Z"/>
+                        </svg>
+                      </button>
                     </div>
                   </div>
 
-                  <template>
                     <div v-for="(la, i) in productArticleGroups[item.produits_id?.id]?.principal ?? []"
                       :key="`p-${i}`"
                       class="flex border-t border-blue-100 bg-blue-50/30">
@@ -1434,7 +1582,25 @@ async function confirmStepBack() {
                       </div>
                       <p class="text-xs text-base-content/30 italic">Aucun article affecté</p>
                     </div>
-                  </template>
+                </div>
+              </div>
+
+              <!-- Articles offerts : liés à la réservation sans produit facturé -->
+              <div v-if="articlesSupplementaires.length" class="mt-2 rounded-xl border border-orange-200 overflow-hidden">
+                <p class="px-3 py-2 bg-orange-50/60 text-[11px] font-semibold text-orange-500 uppercase tracking-wide">
+                  Articles supplémentaires · non facturés sur le devis
+                </p>
+                <div v-for="(la, i) in articlesSupplementaires" :key="`x-${i}`"
+                  class="flex items-center gap-3 px-3 py-2.5 border-t border-orange-100">
+                  <div class="flex-1 min-w-0">
+                    <p class="font-semibold text-sm truncate">{{ la.article?.name || la.article?.produit_id?.name || la.article?.reference }}</p>
+                    <p class="font-mono text-[10px] text-base-content/40">
+                      {{ la.article?.reference }}<span v-if="la.article?.entrepot_id?.nom"> · {{ la.article.entrepot_id.nom }}</span>
+                    </p>
+                  </div>
+                  <span v-if="la.article?.etat" class="text-[10px] px-2 py-0.5 rounded-full font-semibold shrink-0" :class="ETAT_CLS[la.article.etat]">
+                    {{ ETAT_LABEL[la.article.etat] ?? la.article.etat }}
+                  </span>
                 </div>
               </div>
               </div>
@@ -1579,6 +1745,26 @@ async function confirmStepBack() {
                 <div v-if="remise" class="px-4 py-2.5 border-t border-base-200 flex items-center gap-2">
                   <span class="text-sm text-base-content/60 italic">{{ remiseDescription }}</span>
                   <span class="ml-auto text-sm font-bold text-red-500">− {{ remiseMontantTTC.toFixed(2) }} €</span>
+                </div>
+                <!-- Remise manuelle : intitulé + montant, déduits du total du devis -->
+                <div class="px-4 py-2.5 border-t border-base-200 space-y-2">
+                  <span class="text-sm font-medium">Remise manuelle</span>
+                  <div class="flex items-center gap-2">
+                    <input type="text" v-model="remiseManuelleLibelle" maxlength="80" placeholder="Intitulé (ex. Geste commercial)"
+                      :disabled="reservation.status === 'devis_confirme'" @change="saveRemiseManuelle"
+                      class="flex-1 min-w-0 text-sm px-2 py-1 border border-base-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-primary bg-base-100" />
+                    <input type="number" v-model.number="remiseManuelleMontant" min="0" step="0.01" placeholder="0"
+                      :disabled="reservation.status === 'devis_confirme'" @change="saveRemiseManuelle"
+                      class="w-20 text-sm px-2 py-1 border border-base-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-primary text-center font-semibold bg-base-100" />
+                    <span class="text-xs text-base-content/60">€</span>
+                  </div>
+                  <p v-if="remiseManuelleMontant > remiseManuelleTTC" class="text-[11px] text-warning">
+                    Plafonnée au montant du devis
+                  </p>
+                </div>
+                <div v-if="remiseManuelleTTC > 0" class="px-4 py-2.5 border-t border-base-200 flex items-center gap-2">
+                  <span class="text-sm text-base-content/60 italic truncate">{{ remiseManuelleLibelle.trim() || 'Remise' }}</span>
+                  <span class="ml-auto text-sm font-bold text-red-500 shrink-0">− {{ remiseManuelleTTC.toFixed(2) }} €</span>
                 </div>
             </div>
             </div><!-- end grid livraison+remise -->
@@ -1753,6 +1939,60 @@ async function confirmStepBack() {
               <p v-if="confirmBlocked" class="text-xs text-base-content/40 text-center mt-1.5">
                 {{ confirmBlockedReason }} pour continuer
               </p>
+            </div>
+          </template>
+
+          <!-- ── Ajout d'un produit ────────────────────────────────────── -->
+          <template v-else-if="step === 'product_add'">
+            <div class="pr-8 mb-4">
+              <h3 class="font-bold text-xl">Ajouter un produit</h3>
+              <p class="text-sm text-base-content/60 mt-1">Le produit est facturé sur le devis au tarif du catalogue</p>
+            </div>
+
+            <div v-if="produitsStore.loading" class="flex justify-center py-8">
+              <span class="loading loading-spinner loading-md"></span>
+            </div>
+            <div v-else-if="produitsStore.error" class="alert alert-error text-sm mb-4">{{ produitsStore.error }}</div>
+            <template v-else>
+              <input v-model="addSearch" type="text" placeholder="Rechercher un produit…"
+                class="input input-bordered input-sm w-full mb-3" />
+              <div v-if="!produitsAjoutables.length" class="text-sm text-base-content/50 text-center py-8">
+                {{ addSearch ? 'Aucun résultat' : 'Tous les produits du catalogue sont déjà dans la réservation' }}
+              </div>
+              <div v-else class="border border-base-300 rounded-xl divide-y divide-base-200 overflow-hidden mb-4">
+                <label v-for="p in produitsAjoutables" :key="p.id"
+                  class="flex items-center gap-3 px-4 py-3 cursor-pointer transition-colors"
+                  :class="addProduitId === p.id ? 'bg-primary/5' : 'hover:bg-base-200/50'">
+                  <input type="radio" class="radio radio-sm radio-primary shrink-0" :value="p.id" v-model="addProduitId" />
+                  <img v-if="p.image || p.images_urls?.[0]"
+                    :src="p.image ? assetUrl(p.image) : p.images_urls[0]"
+                    class="w-10 h-10 object-cover rounded-lg shrink-0" alt="" />
+                  <div v-else class="w-10 h-10 bg-base-200 rounded-lg shrink-0"></div>
+                  <div class="flex-1 min-w-0">
+                    <p class="font-semibold text-sm truncate">{{ p.nom }}</p>
+                    <p class="text-xs text-base-content/40">
+                      {{ p.categorie || 'Sans catégorie' }}<span v-if="p.statut !== 'published'"> · non publié sur le site</span>
+                    </p>
+                  </div>
+                  <span class="text-sm font-bold text-primary shrink-0">{{ p.prix_location }} €</span>
+                </label>
+              </div>
+
+              <div v-if="produitAAjouter" class="flex items-center gap-3 px-4 py-3 rounded-xl bg-base-200/60 mb-4">
+                <span class="text-sm font-medium">Quantité</span>
+                <input type="number" v-model.number="addQuantite" min="1" max="99"
+                  class="w-20 text-sm px-2 py-1 border border-base-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-primary text-center font-semibold bg-base-100" />
+                <span class="ml-auto text-sm text-base-content/60 truncate">{{ produitAAjouter.nom }} × {{ addQuantite || 1 }}</span>
+                <span class="text-sm font-bold text-primary shrink-0">{{ (Number(produitAAjouter.prix_location) * (addQuantite || 1)).toFixed(2) }} €</span>
+              </div>
+            </template>
+
+            <div class="flex gap-2 justify-end pt-4 border-t border-base-200">
+              <button class="btn btn-sm btn-ghost" @click="step = 'detail'">Retour</button>
+              <button class="btn btn-sm btn-primary" :disabled="!produitAAjouter || loading === 'add_produit'" @click="confirmProductAdd">
+                <span v-if="loading !== 'add_produit'">Ajouter à la réservation</span>
+                <span v-else class="loading loading-spinner loading-xs"></span>
+              </button>
             </div>
           </template>
 
