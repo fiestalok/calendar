@@ -398,7 +398,13 @@ async function toggleLivraison(val) {
   livraison.value = val
   installation.value = val
   if (!val) distanceKm.value = 0
-  await patchReservation(props.reservation.id, { livraison: val, installation: val, distance_km: val ? distanceKm.value : 0 }).catch(() => {})
+  try {
+    // livraison et installation sont des champs entiers dans Directus : 1/0, pas true/false
+    const flag = val ? 1 : 0
+    await patchReservation(props.reservation.id, { livraison: flag, installation: flag, distance_km: val ? distanceKm.value : 0 })
+  } catch (err) {
+    showToast(`Livraison non enregistrée : ${err?.response?.data?.errors?.[0]?.message ?? err?.message ?? 'erreur'}`, 'error')
+  }
 }
 
 function livraisonFee(km) {
