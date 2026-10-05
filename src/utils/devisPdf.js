@@ -56,7 +56,8 @@ export async function loadDevisFonts(baseUrl) {
  *   numero, dateEmission,
  *   client: { societe, prenom, nom, adresse, codePostal, ville, telephone, email },
  *   debut, fin, lieu, livraison,
- *   lignes: [{ designation, detail?, quantite, prixTTC }],  // prixTTC null = prix inconnu
+ *   lignes: [{ designation, detail?, quantite, prixTTC, jours? }],  // prixTTC null = prix inconnu ;
+ *                                    // jours = durée de location pour les produits (absent = forfait)
  *   avecTVA, notes,
  * }
  * fonts = { bangers, nunito, nunitoBold } en base64 (voir loadDevisFonts)
@@ -219,18 +220,20 @@ export async function buildDevisPdf(devis, fonts = {}) {
   text('DÉTAIL DE LA PRESTATION', M, y, { font: 'display', size: 16 })
   y += 3.5
 
-  const cols = avecTVA ? [
-    { label: 'Désignation', x: M,       w: 86 },
-    { label: 'Qté',         x: M + 86,  w: 14, align: 'center' },
-    { label: 'PU HT',       x: M + 100, w: 26, align: 'right' },
-    { label: 'PU TTC',      x: M + 126, w: 26, align: 'right' },
-    { label: 'Total TTC',   x: M + 152, w: 30, align: 'right' },
-  ] : [
-    { label: 'Désignation',  x: M,       w: 112 },
-    { label: 'Qté',          x: M + 112, w: 16, align: 'center' },
-    { label: 'Prix unitaire', x: M + 128, w: 26, align: 'right' },
-    { label: 'Total',        x: M + 154, w: 28, align: 'right' },
-  ]
+  // Les produits sont facturés par jour : la colonne « Jours » apparaît dès que la location dépasse un jour
+  const avecJours  = (devis.lignes ?? []).some(l => (l.jours ?? 1) > 1)
+  const totalLigne = (l) => (l.prixTTC ?? 0) * (l.quantite ?? 1) * (l.jours ?? 1)
+  const montant    = (l, v) => l.prixTTC != null ? eur(v) : '—'
+  const valueCols  = [
+    { label: 'Qté', w: 14, align: 'center', value: l => l.quantite ?? 1 },
+    avecJours && { label: 'Jours', w: 14, align: 'center', value: l => l.jours ?? '' },
+    avecTVA   && { label: 'PU HT', w: 26, align: 'right', montant: true, value: l => montant(l, l.prixTTC / (1 + TVA)) },
+    { label: avecTVA ? 'PU TTC' : 'Prix unitaire', w: 26, align: 'right', montant: true, value: l => montant(l, l.prixTTC) },
+    { label: avecTVA ? 'Total TTC' : 'Total', w: avecTVA ? 30 : 28, align: 'right', montant: true, total: true, value: l => montant(l, totalLigne(l)) },
+  ].filter(Boolean)
+  const designationW = INNER - valueCols.reduce((sum, c) => sum + c.w, 0)
+  const cols = [{ label: 'Désignation', x: M, w: designationW }]
+  for (const c of valueCols) cols.push({ ...c, x: cols.at(-1).x + cols.at(-1).w })
   const cellX = (col) => col.align === 'right' ? col.x + col.w - 5 : col.align === 'center' ? col.x + col.w / 2 : col.x + 5
 
   const drawTableHeader = () => {
@@ -246,8 +249,6 @@ export async function buildDevisPdf(devis, fonts = {}) {
   ensureSpace(9 + 14)
   drawTableHeader()
   for (const l of devis.lignes ?? []) {
-    const qty     = l.quantite ?? 1
-    const ttc     = l.prixTTC ?? null
     const titre   = clampLines(wrap(l.designation ?? '—', cols[0].w - 8, 'bold', 9.5), 2)
     const details = l.detail ? clampLines(wrap(l.detail, cols[0].w - 8, 'body', 7.8), 2) : []
     const rowH    = 6 + (titre.length - 1) * 4.2 + (details.length ? 3.8 + (details.length - 1) * 3.4 : 0) + 3
@@ -259,15 +260,14 @@ export async function buildDevisPdf(devis, fonts = {}) {
     details.forEach((d, i) => text(d, cellX(cols[0]), detailY + i * 3.4, { size: 7.8, color: INK_SOFT }))
 
     // Montants négatifs (remise) en corail
-    const amountColor = ttc != null && ttc < 0 ? CORAL : INK
-    const cells = avecTVA
-      ? [qty, ttc != null ? eur(ttc / (1 + TVA)) : '—', ttc != null ? eur(ttc) : '—', ttc != null ? eur(ttc * qty) : '—']
-      : [qty, ttc != null ? eur(ttc) : '—', ttc != null ? eur(ttc * qty) : '—']
-    cells.forEach((v, i) => {
-      const col    = cols[i + 1]
-      const isLast = i === cells.length - 1
-      text(v, cellX(col), base, { font: isLast ? 'bold' : 'body', size: isLast ? 9.5 : 9, color: i === 0 ? INK : amountColor, align: col.align })
-    })
+    const amountColor = l.prixTTC != null && l.prixTTC < 0 ? CORAL : INK
+    for (const col of cols.slice(1)) {
+      if (col.value(l) === '') continue   // pas de nombre de jours sur un forfait
+      text(col.value(l), cellX(col), base, {
+        font: col.total ? 'bold' : 'body', size: col.total ? 9.5 : 9,
+        color: col.montant ? amountColor : INK, align: col.align,
+      })
+    }
 
     doc.setDrawColor(...BORDER); doc.setLineWidth(0.3)
     doc.line(M, y + rowH, W - M, y + rowH)
@@ -275,7 +275,7 @@ export async function buildDevisPdf(devis, fonts = {}) {
   }
 
   // ── TOTAUX (droite) + BON À SAVOIR / NOTES COURTES (gauche) ───────────────
-  const totalTTC   = (devis.lignes ?? []).reduce((s, l) => s + (l.prixTTC ?? 0) * (l.quantite ?? 1), 0)
+  const totalTTC   = (devis.lignes ?? []).reduce((s, l) => s + totalLigne(l), 0)
   const totalHT    = totalTTC / (1 + TVA)
   const montantTVA = totalTTC - totalHT
 

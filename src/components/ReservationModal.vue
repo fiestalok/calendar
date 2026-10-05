@@ -6,7 +6,7 @@ import { useRouter } from 'vue-router'
 import { useReservationsStore } from '../stores/reservations'
 import { useAuthStore } from '../stores/auth'
 import { useProduitsStore } from '../stores/produits'
-import { livraisonFee, prixLigne, totalProduits, remiseLivraison, plafonneRemise } from '../utils/tarifs'
+import { livraisonFee, joursLocation, prixLigne, totalProduits, remiseLivraison, plafonneRemise } from '../utils/tarifs'
 import {
   getReservationProduits, createReservationProduit, deleteReservationProduit,
   getReservationArticles, getReservationArticleIds,
@@ -262,10 +262,7 @@ const VALIDATED_FIELD = {
   terminee:       'terminee_par',
 }
 
-const allProductsSetup = computed(() =>
-  produits.value.length > 0 &&
-  produits.value.every(p => productArticleGroups.value[p.produits_id?.id]?.principal?.length > 0)
-)
+const allProductsSetup = computed(() => produits.value.length > 0 && produitsSansArticle.value === 0)
 
 const confirmBlocked = computed(() => {
   const s = props.reservation?.status
@@ -406,6 +403,7 @@ async function toggleLivraison(val) {
     // livraison et installation sont des champs entiers dans Directus : 1/0, pas true/false
     const flag = val ? 1 : 0
     await patchReservation(props.reservation.id, { livraison: flag, installation: flag, distance_km: val ? distanceKm.value : 0 })
+    store.updateField(props.reservation.id, { livraison: val, distance_km: distanceKm.value })
   } catch (err) {
     showToast(`Livraison non enregistrée : ${err?.response?.data?.errors?.[0]?.message ?? err?.message ?? 'erreur'}`, 'error')
   }
@@ -424,9 +422,12 @@ const livraisonZoneIdx   = computed(() => {
 
 async function saveDistance() {
   await patchReservation(props.reservation.id, { distance_km: distanceKm.value }).catch(() => {})
+  store.updateField(props.reservation.id, { distance_km: distanceKm.value })
 }
 
-const produitsTotalTTC = computed(() => totalProduits(produits.value))
+// Les produits sont facturés par jour de location, comme sur le site
+const jours            = computed(() => joursLocation(props.reservation?.date_start, props.reservation?.date_end))
+const produitsTotalTTC = computed(() => totalProduits(produits.value, jours.value))
 const remiseMontantTTC = computed(() => remise.value ? remiseLivraison(livraisonMontant.value) : 0)
 // Remise manuelle, plafonnée pour que le total du devis ne devienne pas négatif
 const remiseManuelleTTC = computed(() =>
@@ -474,6 +475,7 @@ async function generateDevis() {
       designation: p.produits_id?.name ?? '—',
       quantite:    p.quantity ?? 1,
       prixTTC:     prixLigne(p),
+      jours:       jours.value,
     }))
     if (livraison.value) {
       const km   = distanceKm.value
@@ -531,6 +533,7 @@ async function generateDevis() {
     const uploaded = await uploadFile(fd)
     await patchReservation(r.id, { fichier_devis: uploaded.id })
     validatedBy.value = { ...validatedBy.value, fichier_devis: uploaded.id }
+    store.updateField(r.id, { date_devis: new Date().toISOString() })
     showToast('Devis généré avec succès', 'success')
   } catch (err) {
     console.error(err)
@@ -565,10 +568,13 @@ async function openProductAdd() {
   await produitsStore.fetch()
 }
 
-// Répercute les produits de la réservation dans le planning (noms + jours bloqués)
+// Répercute les produits de la réservation dans le planning (noms + jours bloqués) et le tableau de bord
 async function syncStoreProduits() {
   await produitsStore.fetch()
-  const fields = { produit_noms: [...new Set(produits.value.map(p => p.produits_id?.name).filter(Boolean))] }
+  const fields = {
+    produit_noms: [...new Set(produits.value.map(p => p.produits_id?.name).filter(Boolean))],
+    lignes:       produits.value,
+  }
   if (produitsStore.produits.length) {
     const catalogue = Object.fromEntries(produitsStore.produits.map(p => [p.id, p]))
     const lignes    = produits.value.map(p => catalogue[p.produits_id?.id]).filter(Boolean)
@@ -716,6 +722,14 @@ const articlesSupplementaires = computed(() =>
     !productArticleGroups.value[la.article.produit_id.id]
   )
 )
+
+// Produits encore sans article affecté : répercuté dans le tableau de bord
+const produitsSansArticle = computed(() =>
+  produits.value.filter(p => !productArticleGroups.value[p.produits_id?.id]?.principal?.length).length
+)
+watch(produitsSansArticle, (n) => {
+  if (tarifsCharges.value) store.updateField(props.reservation.id, { produits_sans_article: n })
+})
 
 async function confirmArticles() {
   loading.value = 'confirm_articles'
@@ -1403,6 +1417,7 @@ async function confirmStepBack() {
               <div class="px-4 py-2.5 border-b border-blue-100 bg-blue-50 flex items-center gap-2">
                 <div class="w-0.5 h-3.5 bg-blue-400 rounded-full shrink-0"></div>
                 <span class="text-xs font-semibold text-gray-500 uppercase tracking-wide">Période</span>
+                <span class="ml-auto text-[11px] font-semibold text-blue-500">{{ jours }} jour{{ jours > 1 ? 's' : '' }} de location</span>
               </div>
               <div class="flex items-stretch divide-x divide-blue-100">
                 <div class="flex-1 px-4 py-3">
@@ -1478,7 +1493,7 @@ async function confirmStepBack() {
                     <div class="flex-1 min-w-0">
                       <p class="font-semibold text-sm truncate">{{ item.produits_id?.name || 'Produit' }}</p>
                       <p class="text-xs text-base-content/40">
-                        Qté {{ item.quantity || 1 }}<span v-if="item.unit_price"> · {{ item.unit_price }} €</span>
+                        Qté {{ item.quantity || 1 }}<span v-if="prixLigne(item) != null"> · {{ prixLigne(item) }} € / jour</span><span v-if="jours > 1"> · {{ jours }} jours</span>
                       </p>
                     </div>
                     <div class="shrink-0 flex items-center gap-2">
@@ -1973,7 +1988,7 @@ async function confirmStepBack() {
                       {{ p.categorie || 'Sans catégorie' }}<span v-if="p.statut !== 'published'"> · non publié sur le site</span>
                     </p>
                   </div>
-                  <span class="text-sm font-bold text-primary shrink-0">{{ p.prix_location }} €</span>
+                  <span class="text-sm font-bold text-primary shrink-0">{{ p.prix_location }} € / jour</span>
                 </label>
               </div>
 
@@ -1981,8 +1996,8 @@ async function confirmStepBack() {
                 <span class="text-sm font-medium">Quantité</span>
                 <input type="number" v-model.number="addQuantite" min="1" max="99"
                   class="w-20 text-sm px-2 py-1 border border-base-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-primary text-center font-semibold bg-base-100" />
-                <span class="ml-auto text-sm text-base-content/60 truncate">{{ produitAAjouter.nom }} × {{ addQuantite || 1 }}</span>
-                <span class="text-sm font-bold text-primary shrink-0">{{ (Number(produitAAjouter.prix_location) * (addQuantite || 1)).toFixed(2) }} €</span>
+                <span class="ml-auto text-sm text-base-content/60 truncate">{{ produitAAjouter.nom }} × {{ addQuantite || 1 }}<template v-if="jours > 1"> × {{ jours }} jours</template></span>
+                <span class="text-sm font-bold text-primary shrink-0">{{ (Number(produitAAjouter.prix_location) * (addQuantite || 1) * jours).toFixed(2) }} €</span>
               </div>
             </template>
 
