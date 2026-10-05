@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
-import { getReservations, getAllReservationsProduits, patchReservation } from '../api/directus'
+import { getReservations, getAllReservationsProduits, getReservationsTarifs, patchReservation } from '../api/directus'
+import { montantReservation } from '../utils/tarifs'
 
 export const useReservationsStore = defineStore('reservations', {
   state: () => ({
@@ -23,19 +24,22 @@ export const useReservationsStore = defineStore('reservations', {
       this.loading = true
       this.error = null
       try {
-        const [rawReservations, rawJunctions] = await Promise.all([
+        const [rawReservations, rawJunctions, rawTarifs] = await Promise.all([
           getReservations(),
           getAllReservationsProduits(),
+          getReservationsTarifs(),
         ])
+        const tarifs = Object.fromEntries(rawTarifs.map(t => [t.id, t]))
 
-        // For each reservation: product names + max blocking days
+        // For each reservation: product lines, product names + max blocking days
         const lookup = {}
         for (const rp of rawJunctions) {
           const id = rp.reservations_id
           // produits_id can come back as an object {id,name,jours_avant,jours_apres}
           // or as a bare integer if the relation didn't resolve — handle both
           const prod = typeof rp.produits_id === 'object' ? rp.produits_id : null
-          if (!lookup[id]) lookup[id] = { jours_avant: 0, jours_apres: 0, noms: [] }
+          if (!lookup[id]) lookup[id] = { jours_avant: 0, jours_apres: 0, noms: [], lignes: [] }
+          lookup[id].lignes.push(rp)
           if (prod) {
             lookup[id].jours_avant = Math.max(lookup[id].jours_avant, prod.jours_avant ?? 0)
             lookup[id].jours_apres = Math.max(lookup[id].jours_apres, prod.jours_apres ?? 0)
@@ -48,6 +52,8 @@ export const useReservationsStore = defineStore('reservations', {
           jours_avant_max: lookup[r.id]?.jours_avant ?? 0,
           jours_apres_max: lookup[r.id]?.jours_apres ?? 0,
           produit_noms:    lookup[r.id]?.noms         ?? [],
+          // Montant calculé comme le total du devis (total_price n'est rempli que par le site)
+          montant:         montantReservation(tarifs[r.id] ?? {}, lookup[r.id]?.lignes ?? []),
         }))
       } catch (err) {
         this.error = err.message || 'Erreur de connexion au serveur'

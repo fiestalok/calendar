@@ -1,12 +1,19 @@
 ﻿<script setup>
-import { computed, onMounted } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useReservationsStore } from '../stores/reservations'
+import ReservationModal from '../components/ReservationModal.vue'
 
 const store = useReservationsStore()
 
 onMounted(() => {
   if (store.reservations.length === 0 && !store.loading) store.fetchReservations()
 })
+
+// ── Modal de détail ──────────────────────────────────────────────────────────
+const selectedId = ref(null)
+const selectedReservation = computed(() =>
+  store.reservations.find(r => r.id === selectedId.value) ?? null
+)
 
 const today = new Date()
 const currentMonth = today.getMonth()
@@ -23,10 +30,13 @@ const thisMonthReservations = computed(() =>
   })
 )
 
-const caThisMonth = computed(() =>
-  thisMonthReservations.value
-    .filter(r => r.status === 'devis_confirme' || r.status === 'terminee')
-    .reduce((sum, r) => sum + (r.total_price || 0), 0)
+// Chiffre d'affaires : montant des réservations terminées, daté par le début de la location
+const chiffreAffaires = (reservations) =>
+  reservations.filter(r => r.status === 'terminee').reduce((sum, r) => sum + (r.montant || 0), 0)
+
+const caThisMonth = computed(() => chiffreAffaires(thisMonthReservations.value))
+const caThisYear  = computed(() =>
+  chiffreAffaires(store.reservations.filter(r => new Date(r.date_start).getFullYear() === currentYear))
 )
 
 const deliveriesThisMonth = computed(() =>
@@ -85,7 +95,7 @@ function clientName(r) {
     <div class="flex-1 overflow-y-auto bg-gray-100 p-6">
 
       <!-- KPI cards (Creatio style: flat colored, number large, label small below) -->
-      <div class="grid grid-cols-4 gap-4 mb-6">
+      <div class="grid grid-cols-5 gap-4 mb-6">
 
         <div class="rounded-xl p-5 shadow-sm flex flex-col justify-between min-h-[100px]" style="background:#1565c0;">
           <div class="text-3xl font-bold text-white leading-none">
@@ -105,7 +115,14 @@ function clientName(r) {
           <div class="text-3xl font-bold text-white leading-none">
             {{ store.loading ? '…' : formatCurrency(caThisMonth) }}
           </div>
-          <div class="text-xs text-green-200 mt-3 font-medium uppercase tracking-wide">CA confirmé du mois</div>
+          <div class="text-xs text-green-200 mt-3 font-medium uppercase tracking-wide">CA du mois (terminées)</div>
+        </div>
+
+        <div class="rounded-xl p-5 shadow-sm flex flex-col justify-between min-h-[100px]" style="background:#00695c;">
+          <div class="text-3xl font-bold text-white leading-none">
+            {{ store.loading ? '…' : formatCurrency(caThisYear) }}
+          </div>
+          <div class="text-xs text-teal-100 mt-3 font-medium uppercase tracking-wide">CA {{ currentYear }} (terminées)</div>
         </div>
 
         <div class="rounded-xl p-5 shadow-sm flex flex-col justify-between min-h-[100px]" style="background:#4a148c;">
@@ -146,7 +163,8 @@ function clientName(r) {
             </tr>
           </thead>
           <tbody class="divide-y divide-gray-50">
-            <tr v-for="r in recentReservations" :key="r.id" class="hover:bg-gray-50 transition-colors cursor-default">
+            <tr v-for="r in recentReservations" :key="r.id" class="hover:bg-gray-50 transition-colors cursor-pointer"
+              @click="selectedId = r.id">
               <td class="px-5 py-3 font-medium text-gray-900">{{ clientName(r) }}</td>
               <td class="px-5 py-3 text-gray-500">{{ formatDate(r.date_start) }}</td>
               <td class="px-5 py-3 text-gray-500">{{ formatDate(r.date_end) }}</td>
@@ -157,7 +175,7 @@ function clientName(r) {
                 >{{ STATUS[r.status]?.label ?? r.status }}</span>
               </td>
               <td class="px-5 py-3 text-right font-semibold text-gray-800">
-                {{ r.total_price != null ? formatCurrency(r.total_price) : '—' }}
+                {{ r.montant ? formatCurrency(r.montant) : '—' }}
               </td>
             </tr>
           </tbody>
@@ -165,5 +183,7 @@ function clientName(r) {
 
       </div>
     </div>
+
+    <ReservationModal :reservation="selectedReservation" @close="selectedId = null" />
   </div>
 </template>

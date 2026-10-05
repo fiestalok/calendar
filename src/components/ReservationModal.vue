@@ -6,6 +6,7 @@ import { useRouter } from 'vue-router'
 import { useReservationsStore } from '../stores/reservations'
 import { useAuthStore } from '../stores/auth'
 import { useProduitsStore } from '../stores/produits'
+import { livraisonFee, prixLigne, totalProduits, remiseLivraison, plafonneRemise } from '../utils/tarifs'
 import {
   getReservationProduits, createReservationProduit, deleteReservationProduit,
   getReservationArticles, getReservationArticleIds,
@@ -60,6 +61,7 @@ const distanceKm         = ref(0)
 const remise             = ref(false)
 const remiseManuelleLibelle = ref('')
 const remiseManuelleMontant = ref(0)
+const tarifsCharges      = ref(false)   // vrai une fois les produits et paramètres de prix chargés
 
 // ── Consommables & setup par article ─────────────────────────────────────────
 // { [produitId]: [{ gamme: {id,nom}, consoItems: [...], materielArts: [...] }] }
@@ -172,6 +174,7 @@ async function loadLinkedArticles(reservationId) {
 }
 
 watch(() => props.reservation?.id, async (id) => {
+  tarifsCharges.value = false
   step.value = 'detail'
   clientContacte.value = false
   devisSigneFile.value = null
@@ -207,6 +210,7 @@ watch(() => props.reservation?.id, async (id) => {
     produits.value = []
   }
   await loadLinkedArticles(id)
+  if (props.reservation?.id === id) tarifsCharges.value = true
 }, { immediate: true })
 
 watch(() => props.reservation?.status, () => { clientContacte.value = false; devisSigneFile.value = null })
@@ -407,15 +411,6 @@ async function toggleLivraison(val) {
   }
 }
 
-function livraisonFee(km) {
-  if (km <= 15)  return 20
-  if (km <= 30)  return 40
-  if (km <= 50)  return 65
-  if (km <= 80)  return 100
-  if (km <= 120) return 150
-  return 150 + (km - 120)
-}
-
 const livraisonMontant   = computed(() => livraison.value ? livraisonFee(distanceKm.value) : 0)
 const livraisonZoneIdx   = computed(() => {
   const km = distanceKm.value
@@ -431,20 +426,18 @@ async function saveDistance() {
   await patchReservation(props.reservation.id, { distance_km: distanceKm.value }).catch(() => {})
 }
 
-const produitsTotalTTC = computed(() =>
-  produits.value.reduce((sum, p) => {
-    const price = Number(p.unit_price) || Number(p.produits_id?.price) || 0
-    return sum + price * (p.quantity || 1)
-  }, 0)
-)
-const remiseMontantTTC = computed(() => {
-  if (!remise.value) return 0
-  return Math.min(livraisonMontant.value, 50)
-})
+const produitsTotalTTC = computed(() => totalProduits(produits.value))
+const remiseMontantTTC = computed(() => remise.value ? remiseLivraison(livraisonMontant.value) : 0)
 // Remise manuelle, plafonnée pour que le total du devis ne devienne pas négatif
-const remiseManuelleTTC = computed(() => {
-  const plafond = Math.max(0, produitsTotalTTC.value + livraisonMontant.value - remiseMontantTTC.value)
-  return Math.min(Math.max(0, Number(remiseManuelleMontant.value) || 0), plafond)
+const remiseManuelleTTC = computed(() =>
+  plafonneRemise(remiseManuelleMontant.value, produitsTotalTTC.value + livraisonMontant.value - remiseMontantTTC.value)
+)
+// Total du devis : répercuté dans la liste des réservations et le tableau de bord
+const montantTotal = computed(() =>
+  produitsTotalTTC.value + livraisonMontant.value - remiseMontantTTC.value - remiseManuelleTTC.value
+)
+watch(montantTotal, (montant) => {
+  if (tarifsCharges.value) store.updateField(props.reservation.id, { montant })
 })
 const remiseDescription = computed(() => {
   if (!remise.value) return ''
@@ -480,7 +473,7 @@ async function generateDevis() {
     const lignes = produits.value.map(p => ({
       designation: p.produits_id?.name ?? '—',
       quantite:    p.quantity ?? 1,
-      prixTTC:     p.unit_price ? Number(p.unit_price) : (p.produits_id?.price ? Number(p.produits_id.price) : null),
+      prixTTC:     prixLigne(p),
     }))
     if (livraison.value) {
       const km   = distanceKm.value

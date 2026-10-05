@@ -146,6 +146,14 @@ export const getReservations = (params = {}) =>
     ...params
   })
 
+// Paramètres de prix de toutes les réservations (livraison, remises), pour calculer leur montant.
+// Requête à part : si un champ manque dans Directus, la liste des réservations se charge quand même.
+export const getReservationsTarifs = () =>
+  request('GET', '/items/reservations', null, {
+    fields: 'id,livraison,distance_km,remise,remise_montant',
+    limit: -1,
+  }).catch(err => { console.warn('[reservations tarifs]', err.message); return [] })
+
 export const getReservationsByClient = (clientId) =>
   request('GET', '/items/reservations', null, {
     fields: ['id', 'date_start', 'date_end', 'status', 'delivery', 'delivery_address', 'total_price', 'notes',
@@ -243,7 +251,7 @@ export const getAllDevis = (params = {}) =>
 
 export const getAllReservationsProduits = () =>
   request('GET', '/items/reservations_produits', null, {
-    fields: 'reservations_id,produits_id.id,produits_id.name,produits_id.jours_avant,produits_id.jours_apres',
+    fields: 'reservations_id,quantity,unit_price,produits_id.id,produits_id.name,produits_id.price,produits_id.jours_avant,produits_id.jours_apres',
     limit: -1,
   }).catch(err => { console.warn('[reservations_produits]', err.message); return [] })
 
