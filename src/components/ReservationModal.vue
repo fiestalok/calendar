@@ -262,7 +262,10 @@ const VALIDATED_FIELD = {
   terminee:       'terminee_par',
 }
 
-const allProductsSetup = computed(() => produits.value.length > 0 && produitsSansArticle.value === 0)
+const allProductsSetup = computed(() =>
+  produits.value.length > 0 &&
+  produits.value.every(p => productArticleGroups.value[p.produits_id?.id]?.principal?.length > 0)
+)
 
 const confirmBlocked = computed(() => {
   const s = props.reservation?.status
@@ -533,7 +536,6 @@ async function generateDevis() {
     const uploaded = await uploadFile(fd)
     await patchReservation(r.id, { fichier_devis: uploaded.id })
     validatedBy.value = { ...validatedBy.value, fichier_devis: uploaded.id }
-    store.updateField(r.id, { date_devis: new Date().toISOString() })
     showToast('Devis généré avec succès', 'success')
   } catch (err) {
     console.error(err)
@@ -722,14 +724,6 @@ const articlesSupplementaires = computed(() =>
     !productArticleGroups.value[la.article.produit_id.id]
   )
 )
-
-// Produits encore sans article affecté : répercuté dans le tableau de bord
-const produitsSansArticle = computed(() =>
-  produits.value.filter(p => !productArticleGroups.value[p.produits_id?.id]?.principal?.length).length
-)
-watch(produitsSansArticle, (n) => {
-  if (tarifsCharges.value) store.updateField(props.reservation.id, { produits_sans_article: n })
-})
 
 async function confirmArticles() {
   loading.value = 'confirm_articles'

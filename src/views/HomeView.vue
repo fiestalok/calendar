@@ -92,62 +92,17 @@ const chiffres = computed(() => [
     detail: `dont ${pluriel(livraisons.value.filter(r => r.status === 'devis_confirme').length, 'signée')}` },
 ])
 
-// ── À traiter ────────────────────────────────────────────────────────────────
-const TON = { attention: 'bg-amber-100 text-amber-800', alerte: 'bg-red-100 text-red-700' }
-
-// Ligne d'une rubrique : ouvre la réservation ; la note à droite est en rouge si alerte
-const ligne = (r, note, alerte = false) => ({
-  cle: r.id, id: r.id, note, alerte,
-  titre:  nomClient(r),
-  detail: [periode(r), produits(r)].filter(Boolean).join(' · '),
-})
-
-const taches = computed(() => {
-  const demandes  = avecStatut('en_attente').sort(parDate)
-  // Devis envoyés restés sans suite : la date d'envoi est celle du dernier devis généré
-  const relances  = avecStatut('devis_realise').sort(parDate)
-    .filter(r => estPassee(r) || !r.date_devis || depuis(r.date_devis) >= DELAI_RELANCE)
-  const aCloturer = avecStatut('devis_confirme').filter(estPassee).sort(parDate)
-  // Les demandes à chiffrer n'ont pas encore d'article : seuls les devis déjà partis sont signalés
-  const sansArticle = avecStatut('devis_realise', 'devis_confirme').sort(parDate)
-    .filter(r => !estPassee(r) && r.produits_sans_article > 0)
-  const stockBas  = consommables.value.filter(c => (c.stock ?? 0) <= (c.seuil_alerte ?? SEUIL_DEFAUT))
-  const articlesConnus = store.reservations.every(r => r.produits_sans_article != null)
-
-  return [
-    { cle: 'demandes', label: 'Nouvelles demandes à chiffrer', ton: 'attention', total: demandes.length,
-      lignes: demandes.map(r => estPassee(r)
-        ? ligne(r, 'date passée', true)
-        : ligne(r, r.date_created ? `reçue ${ilYA(depuis(r.date_created))}` : '')) },
-    { cle: 'relances', label: `Devis sans réponse depuis ${DELAI_RELANCE} jours`, ton: 'attention', total: relances.length,
-      lignes: relances.map(r => estPassee(r)
-        ? ligne(r, 'date passée', true)
-        : ligne(r, r.date_devis ? `devis généré ${ilYA(depuis(r.date_devis))}` : "date d'envoi inconnue")) },
-    { cle: 'cloture', label: 'Événements passés à clôturer', ton: 'alerte', total: aCloturer.length,
-      lignes: aCloturer.map(r => ligne(r, `${formatCurrency(r.montant || 0)} · passé ${ilYA(-dansJours(fin(r)))}`)) },
-    articlesConnus && {
-      cle: 'articles', label: 'Produits sans article affecté', ton: 'alerte',
-      total: sansArticle.reduce((sum, r) => sum + r.produits_sans_article, 0),
-      lignes: sansArticle.map(r => ligne(r, `${pluriel(r.produits_sans_article, 'produit')} à configurer`)) },
-    { cle: 'stock', label: 'Consommables sous le seuil', ton: 'attention', total: stockBas.length,
-      lignes: stockBas.map(c => ({
-        cle: `conso-${c.id}`, vers: '/consommables', alerte: (c.stock ?? 0) <= 0,
-        titre:  c.nom,
-        detail: `Seuil d'alerte : ${c.seuil_alerte ?? SEUIL_DEFAUT}`,
-        note:   `${[c.stock ?? 0, c.unite].filter(v => v != null && v !== '').join(' ')} en stock`,
-      })) },
-  ].filter(Boolean)
-})
-
-// Rubrique dépliée : la première non vide tant que rien n'a été choisi
-const choix   = ref(undefined)
-const depliee = computed(() => choix.value !== undefined ? choix.value : taches.value.find(t => t.total)?.cle ?? null)
-const basculer = (cle) => { choix.value = depliee.value === cle ? null : cle }
-
-function ouvrir(l) {
-  if (l.vers) router.push(l.vers)
-  else selectedId.value = l.id
+// ── Historique des réservations ──────────────────────────────────────────────
+const STATUS = {
+  en_attente:     { label: 'En attente',    cls: 'bg-amber-100 text-amber-800' },
+  devis_realise:  { label: 'Devis réalisé', cls: 'bg-blue-100 text-blue-800' },
+  devis_confirme: { label: 'Confirmé',      cls: 'bg-emerald-100 text-emerald-800' },
+  terminee:       { label: 'Terminée',      cls: 'bg-gray-100 text-gray-600' },
+  annulee:        { label: 'Annulée',       cls: 'bg-red-100 text-red-700' },
 }
+
+// Toutes les réservations, de la plus récente à la plus ancienne (date de début)
+const historique = computed(() => [...store.reservations].sort((a, b) => debut(b) - debut(a)))
 
 // ── Les prochains jours ──────────────────────────────────────────────────────
 const NON_SIGNE = { en_attente: 'À chiffrer', devis_realise: 'Devis non signé' }
@@ -262,42 +217,30 @@ const produitsLoues = computed(() => {
 
       <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 items-start">
 
-        <!-- À traiter : chaque rubrique se déplie sur les réservations concernées -->
+        <!-- Historique : toutes les réservations, un clic ouvre la fiche -->
         <section class="bg-white rounded-xl shadow-sm overflow-hidden">
           <div class="px-5 py-3.5 border-b border-gray-100 flex items-center gap-2">
             <span class="w-1 h-4 rounded-full bg-[#e65100]"></span>
-            <h2 class="text-sm font-semibold text-gray-800">À traiter</h2>
+            <h2 class="text-sm font-semibold text-gray-800">Historique des réservations</h2>
+            <RouterLink to="/reservations" class="ml-auto text-xs font-medium text-blue-600 hover:underline">Tout voir</RouterLink>
           </div>
           <div v-if="chargement" class="p-8 text-center text-sm text-gray-400">Chargement…</div>
-          <ul v-else class="divide-y divide-gray-100">
-            <li v-for="t in taches" :key="t.cle">
-              <button type="button"
-                class="w-full flex items-center gap-2.5 px-5 py-2.5 text-left text-sm transition-colors"
-                :class="t.total ? 'text-gray-800 hover:bg-gray-50' : 'text-gray-400 cursor-default'"
-                :disabled="!t.total" :aria-expanded="depliee === t.cle && t.total > 0"
-                @click="basculer(t.cle)">
-                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor"
-                  class="w-3.5 h-3.5 shrink-0 transition-transform"
-                  :class="[t.total ? 'text-gray-400' : 'text-gray-200', { 'rotate-90': depliee === t.cle && t.total }]">
-                  <path fill-rule="evenodd" d="M6.22 4.22a.75.75 0 0 1 1.06 0l3.25 3.25a.75.75 0 0 1 0 1.06l-3.25 3.25a.75.75 0 0 1-1.06-1.06L8.94 8 6.22 5.28a.75.75 0 0 1 0-1.06Z" clip-rule="evenodd" />
-                </svg>
-                <span class="flex-1">{{ t.label }}</span>
-                <span class="text-xs font-semibold px-2 py-0.5 rounded-full"
-                  :class="t.total ? TON[t.ton] : 'bg-gray-100 text-gray-400'">{{ t.total }}</span>
-              </button>
-              <div v-if="depliee === t.cle && t.total" class="bg-gray-50 border-t border-gray-100 divide-y divide-gray-100">
-                <button v-for="l in t.lignes" :key="l.cle" type="button"
-                  class="w-full flex items-center gap-3 pl-11 pr-5 py-2 text-left hover:bg-blue-50 transition-colors"
-                  @click="ouvrir(l)">
-                  <span class="flex-1 min-w-0">
-                    <span class="block text-sm font-medium text-gray-900 truncate">{{ l.titre }}</span>
-                    <span class="block text-xs text-gray-500 truncate">{{ l.detail }}</span>
-                  </span>
-                  <span class="text-xs shrink-0" :class="l.alerte ? 'text-red-600 font-semibold' : 'text-gray-400'">{{ l.note }}</span>
-                </button>
-              </div>
-            </li>
-          </ul>
+          <div v-else-if="!historique.length" class="p-8 text-center text-sm text-gray-400">Aucune réservation</div>
+          <div v-else class="divide-y divide-gray-100 max-h-[26rem] overflow-y-auto">
+            <button v-for="r in historique" :key="r.id" type="button"
+              class="w-full flex items-center gap-3 px-5 py-2.5 text-left hover:bg-gray-50 transition-colors"
+              @click="selectedId = r.id">
+              <span class="flex-1 min-w-0">
+                <span class="block text-sm font-medium text-gray-900 truncate">{{ nomClient(r) }}</span>
+                <span class="block text-xs text-gray-500 truncate">{{ [periode(r), produits(r)].filter(Boolean).join(' · ') }}</span>
+              </span>
+              <span class="text-[11px] px-2 py-0.5 rounded-full font-semibold shrink-0"
+                :class="STATUS[r.status]?.cls ?? 'bg-gray-100 text-gray-600'">{{ STATUS[r.status]?.label ?? r.status }}</span>
+              <span class="w-20 text-right text-sm font-semibold text-gray-800 shrink-0 tabular-nums">
+                {{ r.montant ? formatCurrency(r.montant) : '—' }}
+              </span>
+            </button>
+          </div>
         </section>
 
         <!-- Agenda : départs et retours de matériel -->

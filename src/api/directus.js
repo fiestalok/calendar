@@ -154,14 +154,6 @@ export const getReservationsTarifs = () =>
     limit: -1,
   }).catch(err => { console.warn('[reservations tarifs]', err.message); return [] })
 
-// Dates de suivi de toutes les réservations : réception de la demande et dernier devis généré.
-// Requête à part, pour la même raison que les tarifs.
-export const getReservationsSuivi = () =>
-  request('GET', '/items/reservations', null, {
-    fields: 'id,date_created,fichier_devis.uploaded_on',
-    limit: -1,
-  }).catch(err => { console.warn('[reservations suivi]', err.message); return [] })
-
 export const getReservationsByClient = (clientId) =>
   request('GET', '/items/reservations', null, {
     fields: ['id', 'date_start', 'date_end', 'status', 'delivery', 'delivery_address', 'total_price', 'notes',
@@ -262,14 +254,6 @@ export const getAllReservationsProduits = () =>
     fields: 'reservations_id,quantity,unit_price,produits_id.id,produits_id.name,produits_id.price,produits_id.jours_avant,produits_id.jours_apres',
     limit: -1,
   }).catch(err => { console.warn('[reservations_produits]', err.message); return [] })
-
-// Articles affectés à toutes les réservations, pour repérer les produits qui n'en ont pas encore.
-// Renvoie null si la lecture échoue : l'information est alors inconnue, et non « aucun article ».
-export const getAllReservationsArticles = () =>
-  request('GET', '/items/reservations_articles', null, {
-    fields: 'reservations_id,articles_id.type,articles_id.produit_id',
-    limit: -1,
-  }).catch(err => { console.warn('[reservations_articles]', err.message); return null })
 
 export const getFactures = () =>
   request('GET', '/items/factures', null, {

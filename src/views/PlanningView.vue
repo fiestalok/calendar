@@ -3,7 +3,7 @@ import { ref } from 'vue'
 import CalendarView from './CalendarView.vue'
 import GanttView from '../components/GanttView.vue'
 
-const tab = ref('gantt')
+const tab = ref('calendar')
 </script>
 
 <template>
