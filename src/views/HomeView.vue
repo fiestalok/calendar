@@ -1,27 +1,16 @@
 <script setup>
-import { computed, onMounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, onMounted, ref } from 'vue'
 import { differenceInCalendarDays, format, isValid, parseISO, startOfDay } from 'date-fns'
 import { fr } from 'date-fns/locale'
 import { useReservationsStore } from '../stores/reservations'
-import { getConsommables } from '../api/directus'
 import { joursLocation, totalLigne } from '../utils/tarifs'
 import ReservationModal from '../components/ReservationModal.vue'
 
-const DELAI_RELANCE = 5   // jours sans réponse avant de signaler un devis envoyé
-const HORIZON       = 7   // jours affichés dans l'agenda, aujourd'hui compris
-const SEUIL_DEFAUT  = 5   // seuil d'alerte d'un consommable qui n'en a pas (comme la page Consommables)
+const HORIZON = 7   // jours affichés dans l'agenda, aujourd'hui compris
 
-const store  = useReservationsStore()
-const router = useRouter()
+const store = useReservationsStore()
 
-const consommables = ref([])
-const chargerConsommables = async () => { consommables.value = (await getConsommables()) ?? [] }
-
-onMounted(() => {
-  store.fetchReservations()
-  chargerConsommables()
-})
+onMounted(() => store.fetchReservations())
 
 // Le chargement n'est signalé qu'à la première ouverture : ensuite les chiffres se mettent à jour sur place
 const chargement = computed(() => store.loading && !store.reservations.length)
@@ -31,8 +20,6 @@ const selectedId = ref(null)
 const selectedReservation = computed(() =>
   store.reservations.find(r => r.id === selectedId.value) ?? null
 )
-// Configurer ou terminer une réservation modifie le stock des consommables
-watch(selectedId, (id) => { if (!id) chargerConsommables() })
 
 // ── Dates ────────────────────────────────────────────────────────────────────
 const aujourdHui    = startOfDay(new Date())
@@ -44,15 +31,12 @@ const debut      = (r) => date(r.date_start)
 const fin        = (r) => date(r.date_end ?? r.date_start)
 // Nombre de jours entre aujourd'hui et une date : négatif si elle est passée
 const dansJours  = (d) => differenceInCalendarDays(d, aujourdHui)
-const depuis     = (iso) => -dansJours(date(iso))
 const estPassee  = (r) => dansJours(fin(r)) < 0
 const cetteAnnee = (r) => debut(r).getFullYear() === anneeCourante
 const ceMois     = (r) => cetteAnnee(r) && debut(r).getMonth() === moisCourant
-const parDate    = (a, b) => debut(a) - debut(b)
 
 const jour    = (d, motif) => isValid(d) ? format(d, motif, { locale: fr }) : '—'
 const heure   = (d) => (d.getHours() || d.getMinutes()) ? format(d, d.getMinutes() ? "H'h'mm" : "H'h'") : null
-const ilYA    = (n) => n <= 0 ? "aujourd'hui" : n === 1 ? 'hier' : `il y a ${n} jours`
 const pluriel = (n, mot) => `${n} ${mot}${n > 1 ? 's' : ''}`
 const majuscule = (texte) => texte.charAt(0).toUpperCase() + texte.slice(1)
 
@@ -70,9 +54,13 @@ const somme      = (reservations) => reservations.reduce((sum, r) => sum + (r.mo
 const nomClient = (r) =>
   [r.client?.first_name, r.client?.last_name].filter(Boolean).join(' ') || r.client?.company_name || '—'
 
-const periode = (r) => joursLocation(r.date_start, r.date_end) > 1
-  ? `${jour(debut(r), 'd MMM')} → ${jour(fin(r), 'd MMM')}`
-  : jour(debut(r), 'EEE d MMM')
+// Période d'une réservation ; l'année n'est précisée que si ce n'est pas l'année en cours
+const periode = (r) => {
+  const annee = fin(r).getFullYear() === anneeCourante ? '' : ' yyyy'
+  return joursLocation(r.date_start, r.date_end) > 1
+    ? `${jour(debut(r), 'd MMM')} → ${jour(fin(r), `d MMM${annee}`)}`
+    : jour(debut(r), `EEE d MMM${annee}`)
+}
 
 const produits = (r) => (r.lignes ?? [])
   .map(l => l.produits_id?.name && ((l.quantity || 1) > 1 ? `${l.produits_id.name} × ${l.quantity}` : l.produits_id.name))
