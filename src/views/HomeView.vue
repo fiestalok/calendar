@@ -71,13 +71,13 @@ const produits = (r) => (r.lignes ?? [])
 
 // ── Chiffres clés ────────────────────────────────────────────────────────────
 // Chiffre d'affaires : montant des réservations terminées, daté par le début de la location
-const termineesAnnee = computed(() => avecStatut('terminee').filter(cetteAnnee))
-const termineesMois  = computed(() => termineesAnnee.value.filter(ceMois))
-// Devis signés ou envoyés dont l'événement n'est pas encore passé
-const signeesAVenir  = computed(() => avecStatut('devis_confirme').filter(r => !estPassee(r)))
-const devisEnvoyes   = computed(() => avecStatut('devis_realise').filter(r => !estPassee(r)))
+const termineesAnnee   = computed(() => avecStatut('terminee').filter(cetteAnnee))
+const termineesMois    = computed(() => termineesAnnee.value.filter(ceMois))
+// Réservations confirmées (devis signé ou accord oral) et devis envoyés, dont l'événement n'est pas encore passé
+const confirmeesAVenir = computed(() => avecStatut('devis_confirme').filter(r => !estPassee(r)))
+const devisEnvoyes     = computed(() => avecStatut('devis_realise').filter(r => !estPassee(r)))
 // Livraisons cochées dans le CRM (et non la demande faite sur le site) sur les réservations à venir
-const livraisons     = computed(() =>
+const livraisons       = computed(() =>
   avecStatut('en_attente', 'devis_realise', 'devis_confirme').filter(r => r.livraison && dansJours(debut(r)) >= 0)
 )
 
@@ -86,13 +86,13 @@ const chiffres = computed(() => [
     valeur: formatCurrency(somme(termineesMois.value)), detail: pluriel(termineesMois.value.length, 'terminée') },
   { label: `CA ${anneeCourante}`, fond: '#00695c',
     valeur: formatCurrency(somme(termineesAnnee.value)), detail: pluriel(termineesAnnee.value.length, 'terminée') },
-  { label: 'À venir, signé', fond: '#1565c0',
-    valeur: formatCurrency(somme(signeesAVenir.value)), detail: pluriel(signeesAVenir.value.length, 'devis signé') },
+  { label: 'À venir, confirmé', fond: '#1565c0',
+    valeur: formatCurrency(somme(confirmeesAVenir.value)), detail: pluriel(confirmeesAVenir.value.length, 'devis confirmé') },
   { label: 'En attente de réponse', fond: '#e65100',
     valeur: formatCurrency(somme(devisEnvoyes.value)), detail: pluriel(devisEnvoyes.value.length, 'devis envoyé') },
   { label: 'Livraisons planifiées', fond: '#4a148c',
     valeur: livraisons.value.length,
-    detail: `dont ${pluriel(livraisons.value.filter(r => r.status === 'devis_confirme').length, 'signée')}` },
+    detail: `dont ${pluriel(livraisons.value.filter(r => r.status === 'devis_confirme').length, 'confirmée')}` },
 ])
 
 // ── Historique des réservations ──────────────────────────────────────────────
@@ -100,7 +100,7 @@ const chiffres = computed(() => [
 const historique = computed(() => [...store.reservations].sort((a, b) => debut(b) - debut(a)))
 
 // ── Les prochains jours ──────────────────────────────────────────────────────
-const NON_SIGNE = { en_attente: 'À chiffrer', devis_realise: 'Devis non signé' }
+const NON_CONFIRME = { en_attente: 'À chiffrer', devis_realise: 'Devis non confirmé' }
 
 const jourAgenda = (d, dans) => {
   if (dans === 0) return "Aujourd'hui"
@@ -126,7 +126,7 @@ const agenda = computed(() => {
         livraison: livree && depart,
         accent:    livree,
         detail:    [nomClient(r), produits(r), livree ? lieu(r) : null].filter(Boolean).join(' · '),
-        nonSigne:  NON_SIGNE[r.status],
+        nonConfirme:  NON_CONFIRME[r.status],
       })
     }
   }
@@ -140,25 +140,25 @@ const hauteur = (valeur, max) => valeur > 0 ? Math.max(2, valeur / max * 82) : 0
 
 const caParMois = computed(() => {
   const mois = Array.from({ length: 12 }, (_, i) => ({
-    nom: jour(new Date(anneeCourante, i, 1), 'LLLL'), courant: i === moisCourant, termine: 0, signe: 0,
+    nom: jour(new Date(anneeCourante, i, 1), 'LLLL'), courant: i === moisCourant, termine: 0, confirme: 0,
   }))
   for (const r of termineesAnnee.value) mois[debut(r).getMonth()].termine += r.montant || 0
-  for (const r of signeesAVenir.value.filter(cetteAnnee)) mois[debut(r).getMonth()].signe += r.montant || 0
-  const max = Math.max(1, ...mois.map(m => m.termine + m.signe))
+  for (const r of confirmeesAVenir.value.filter(cetteAnnee)) mois[debut(r).getMonth()].confirme += r.montant || 0
+  const max = Math.max(1, ...mois.map(m => m.termine + m.confirme))
   return mois.map(m => ({
     ...m,
-    total:    m.termine + m.signe,
+    total:    m.termine + m.confirme,
     hTermine: hauteur(m.termine, max),
-    hSigne:   hauteur(m.signe, max),
-    titre:    `${majuscule(m.nom)} : ${formatCurrency(m.termine)} terminé${m.signe ? `, ${formatCurrency(m.signe)} signé à venir` : ''}`,
+    hConfirme: hauteur(m.confirme, max),
+    titre:    `${majuscule(m.nom)} : ${formatCurrency(m.termine)} terminé${m.confirme ? `, ${formatCurrency(m.confirme)} confirmé à venir` : ''}`,
   }))
 })
 
 // ── Produits les plus loués ──────────────────────────────────────────────────
-// Locations terminées ou signées de l'année : nombre de réservations et CA des lignes (hors livraison et remises)
+// Locations terminées ou confirmées de l'année : nombre de réservations et CA des lignes (hors livraison et remises)
 const produitsLoues = computed(() => {
   const parProduit = {}
-  for (const r of [...termineesAnnee.value, ...signeesAVenir.value.filter(cetteAnnee)]) {
+  for (const r of [...termineesAnnee.value, ...confirmeesAVenir.value.filter(cetteAnnee)]) {
     const jours = joursLocation(r.date_start, r.date_end)
     for (const l of r.lignes ?? []) {
       const produit = l.produits_id
@@ -267,7 +267,7 @@ const produitsLoues = computed(() => {
               </span>
               <span class="flex items-center gap-2 mt-0.5">
                 <span class="flex-1 min-w-0 text-xs text-gray-500 truncate" :title="e.detail">{{ e.detail }}</span>
-                <span v-if="e.nonSigne" class="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 shrink-0">{{ e.nonSigne }}</span>
+                <span v-if="e.nonConfirme" class="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-amber-100 text-amber-800 shrink-0">{{ e.nonConfirme }}</span>
               </span>
             </button>
           </div>
@@ -277,7 +277,7 @@ const produitsLoues = computed(() => {
 
       <div class="grid grid-cols-1 lg:grid-cols-5 gap-4 items-start">
 
-        <!-- CA par mois : terminé, et signé à venir par-dessus -->
+        <!-- CA par mois : terminé, et confirmé à venir par-dessus -->
         <section class="lg:col-span-3 bg-white rounded-xl shadow-sm overflow-hidden">
           <div class="px-5 py-3.5 border-b border-gray-100 flex items-center gap-2">
             <span class="w-1 h-4 rounded-full bg-[#1b5e20]"></span>
@@ -289,8 +289,8 @@ const produitsLoues = computed(() => {
               <div v-for="m in caParMois" :key="m.nom" :title="m.titre"
                 class="flex-1 min-w-0 h-full flex flex-col items-center justify-end">
                 <span v-if="m.total" class="text-[10px] leading-none text-gray-500 whitespace-nowrap mb-1">{{ formatNombre(m.total) }}</span>
-                <div v-if="m.signe" class="w-full shrink-0 rounded-t bg-gray-300" :style="{ height: m.hSigne + '%' }"></div>
-                <div v-if="m.termine" class="w-full shrink-0 bg-emerald-500" :class="{ 'rounded-t': !m.signe }" :style="{ height: m.hTermine + '%' }"></div>
+                <div v-if="m.confirme" class="w-full shrink-0 rounded-t bg-gray-300" :style="{ height: m.hConfirme + '%' }"></div>
+                <div v-if="m.termine" class="w-full shrink-0 bg-emerald-500" :class="{ 'rounded-t': !m.confirme }" :style="{ height: m.hTermine + '%' }"></div>
                 <div v-if="!m.total" class="w-full h-0.5 shrink-0 bg-gray-100"></div>
               </div>
             </div>
@@ -300,7 +300,7 @@ const produitsLoues = computed(() => {
             </div>
             <div class="flex gap-4 mt-3 text-xs text-gray-500">
               <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-sm bg-emerald-500"></span>Terminé</span>
-              <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-sm bg-gray-300"></span>Signé, à venir</span>
+              <span class="flex items-center gap-1.5"><span class="w-2.5 h-2.5 rounded-sm bg-gray-300"></span>Confirmé, à venir</span>
             </div>
           </div>
         </section>
@@ -314,7 +314,7 @@ const produitsLoues = computed(() => {
           </div>
           <div v-if="chargement" class="p-8 text-center text-sm text-gray-400">Chargement…</div>
           <div v-else-if="!produitsLoues.length" class="p-8 text-center text-sm text-gray-400">
-            Aucune location terminée ou signée en {{ anneeCourante }}
+            Aucune location terminée ou confirmée en {{ anneeCourante }}
           </div>
           <ul v-else class="divide-y divide-gray-100">
             <li v-for="p in produitsLoues" :key="p.id" class="flex items-center justify-between gap-3 px-5 py-2.5 text-sm">

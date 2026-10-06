@@ -2,7 +2,7 @@
 // unités de (début − jours_avant) à (fin + jours_apres), comme les blocages logistiques du planning.
 import { addDays, parseISO, startOfDay } from 'date-fns'
 
-const FERMES   = ['devis_confirme', 'terminee']   // devis signés : les unités sont prises
+const FERMES   = ['devis_confirme', 'terminee']   // réservations confirmées : les unités sont prises
 const EN_DEVIS = ['en_attente', 'devis_realise']  // devis encore ouverts : elles peuvent l'être
 
 const jour = (iso) => startOfDay(parseISO(iso))

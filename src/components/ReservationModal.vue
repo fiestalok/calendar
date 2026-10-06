@@ -58,6 +58,7 @@ const articles           = ref([])
 const selectedArticleIds = ref({})
 const articleLoading     = ref(false)
 const clientContacte     = ref(false)
+const accordOral         = ref(false)   // accord donné de vive voix : confirme la réservation sans devis signé
 const avecTVA            = ref(false)   // franchise en base de TVA (art. 293 B du CGI)
 const devisSigneFile     = ref(null)
 const devisSigneInput    = ref(null)
@@ -193,6 +194,7 @@ watch(() => props.reservation?.id, async (id) => {
   tarifsCharges.value = false
   step.value = 'detail'
   clientContacte.value = false
+  accordOral.value = false
   devisSigneFile.value = null
   linkedArticles.value = []
   junctionIds.value    = []
@@ -237,7 +239,11 @@ watch(() => props.reservation?.id, async (id) => {
   if (props.reservation?.id === id) tarifsCharges.value = true
 }, { immediate: true })
 
-watch(() => props.reservation?.status, () => { clientContacte.value = false; devisSigneFile.value = null })
+watch(() => props.reservation?.status, () => {
+  clientContacte.value = false
+  accordOral.value = false
+  devisSigneFile.value = null
+})
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const client  = computed(() => props.reservation?.client)
@@ -256,6 +262,15 @@ const signedDevisUrl = computed(() =>
 
 const devisGenereUrl = computed(() =>
   validatedBy.value.fichier_devis ? getFileUrl(validatedBy.value.fichier_devis) : null
+)
+
+// L'accord oral coché tient lieu de devis signé tant qu'aucun devis signé n'est déposé
+const accordOralRetenu = computed(() => accordOral.value && !signedDevisUrl.value)
+
+// Réservation confirmée sans devis signé : elle l'a été sur accord oral du client.
+// Rien n'est enregistré pour cela ; déposer le devis signé plus tard suffit à la faire passer en « signée ».
+const confirmeeSansSignature = computed(() =>
+  tarifsCharges.value && ['devis_confirme', 'terminee'].includes(props.reservation?.status) && !signedDevisUrl.value
 )
 
 // Message de confirmation, avec rappel si un devis déjà généré devient périmé
@@ -403,7 +418,7 @@ const actions = computed(() => {
   if (s === 'devis_realise') return [
     { key: 'cancel',  label: 'Annuler',              status: 'annulee',        cls: 'btn-error btn-outline' },
     { key: 'reset',   label: 'Pas encore envoyé',   status: 'en_attente',     cls: 'btn-neutral btn-outline' },
-    { key: 'confirm', label: 'Devis signé reçu',    status: 'devis_confirme', cls: 'btn-primary' },
+    { key: 'confirm', label: accordOralRetenu.value ? 'Accord oral reçu' : 'Devis signé reçu', status: 'devis_confirme', cls: 'btn-primary' },
   ]
   if (s === 'devis_confirme') return [
     { key: 'step_back', label: 'Revenir à l\'envoi', status: 'devis_realise', cls: 'btn-neutral btn-outline' },
@@ -427,7 +442,7 @@ const allProductsSetup = computed(() =>
 const confirmBlocked = computed(() => {
   const s = props.reservation?.status
   if (s === 'en_attente') return !devisGenereUrl.value || devisPerime.value || !clientContacte.value
-  if (s === 'devis_realise') return !signedDevisUrl.value || !allProductsSetup.value
+  if (s === 'devis_realise') return (!signedDevisUrl.value && !accordOral.value) || !allProductsSetup.value
   return false
 })
 
@@ -438,7 +453,7 @@ const confirmBlockedReason = computed(() => {
     if (devisPerime.value) return 'Regénérez le devis'
     if (!clientContacte.value) return 'Cochez la confirmation client'
   }
-  if (!signedDevisUrl.value) return 'Ajoutez le devis signé'
+  if (!signedDevisUrl.value && !accordOral.value) return 'Ajoutez le devis signé ou cochez l\'accord oral'
   if (!allProductsSetup.value) return 'Configurez tous les produits'
   return ''
 })
@@ -1427,7 +1442,7 @@ async function confirmStepBack() {
               </div>
               <span class="text-[10px] font-medium text-center leading-tight mt-1 w-14"
                 :class="statusIdx === 2 ? 'text-primary font-semibold' : statusIdx > 2 ? 'text-primary/60' : 'text-base-content/30'">
-                Devis signé
+                {{ confirmeeSansSignature ? 'Accord oral' : 'Devis signé' }}
               </span>
               <span v-if="validatedBy.devis_confirme_par" class="text-[9px] text-base-content/35 mt-0.5 text-center leading-tight w-14 truncate">
                 {{ validatedBy.devis_confirme_par }}
@@ -2029,8 +2044,8 @@ async function confirmStepBack() {
                 <div class="flex flex-col">
                   <div class="px-3 py-2 bg-base-50 border-b border-base-200 flex items-center gap-1.5">
                     <p class="text-xs font-semibold text-base-content/60">Devis signé</p>
-                    <span v-if="reservation.status === 'devis_realise'"
-                      class="text-[9px] font-bold text-orange-500 uppercase">{{ signedDevisUrl ? '' : 'Requis' }}</span>
+                    <span v-if="reservation.status === 'devis_realise' && !signedDevisUrl && !accordOral"
+                      class="text-[9px] font-bold text-orange-500 uppercase">Requis</span>
                     <svg v-if="signedDevisUrl" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="w-3 h-3 text-success">
                       <path fill-rule="evenodd" d="M12.416 3.376a.75.75 0 0 1 .208 1.04l-5 7.5a.75.75 0 0 1-1.154.114l-3-3a.75.75 0 0 1 1.06-1.06l2.353 2.353 4.493-6.74a.75.75 0 0 1 1.04-.207Z" clip-rule="evenodd"/>
                     </svg>
@@ -2047,8 +2062,18 @@ async function confirmStepBack() {
                       <p class="text-xs text-base-content/40">PDF signé</p>
                     </div>
                   </a>
+                  <div v-else-if="confirmeeSansSignature" class="flex flex-col items-center justify-center px-3 py-4 text-center">
+                    <span class="text-xs font-semibold text-base-content/70">Accord oral du client</span>
+                    <span class="text-[11px] text-base-content/40">Devis non signé</span>
+                  </div>
                   <div v-else class="flex items-center justify-center px-3 py-5 text-xs text-base-content/30">En attente</div>
                   <div v-if="reservation.status === 'devis_realise' || reservation.status === 'devis_confirme'" class="px-3 py-2.5">
+                    <!-- Accord donné de vive voix : il permet de confirmer sans déposer de devis signé -->
+                    <label v-if="reservation.status === 'devis_realise' && !signedDevisUrl"
+                      class="flex items-center gap-2 mb-2 cursor-pointer select-none">
+                      <input type="checkbox" v-model="accordOral" class="checkbox checkbox-xs checkbox-primary" />
+                      <span class="text-xs" :class="accordOral ? 'text-base-content' : 'text-base-content/70'">Accord oral du client, sans devis signé</span>
+                    </label>
                     <input ref="devisSigneInput" type="file" accept=".pdf,.jpg,.jpeg,.png" class="hidden" @change="onDevisSigneChange" />
                     <button class="btn btn-xs gap-1 w-full" :class="signedDevisUrl ? 'btn-ghost' : 'btn-outline btn-warning'"
                       @click="devisSigneInput.click()">
