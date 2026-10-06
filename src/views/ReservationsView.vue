@@ -3,18 +3,19 @@ import { ref, computed, onMounted } from 'vue'
 import { format, parseISO } from 'date-fns'
 import { fr } from 'date-fns/locale'
 import { useReservationsStore } from '../stores/reservations'
-import { useAuthStore } from '../stores/auth'
-import {
-  getArticles, getClients,
-  createReservation, createReservationProduit, createReservationArticle,
-} from '../api/directus'
+import { useNouveauDevisStore } from '../stores/nouveauDevis'
+import { nomFiche } from '../utils/clients'
+import { joursLocation } from '../utils/tarifs'
 import ReservationModal from '../components/ReservationModal.vue'
 import StatusBadge from '../components/StatusBadge.vue'
 
 const store = useReservationsStore()
-const auth  = useAuthStore()
+const nouveauDevis = useNouveauDevisStore()
 
 onMounted(() => store.fetchReservations())
+
+// Le chargement n'est signalé qu'à la première ouverture : ensuite la liste se met à jour sur place
+const chargement = computed(() => store.loading && !store.reservations.length)
 
 // ── Modal de détail ──────────────────────────────────────────────────────────
 const selectedId = ref(null)
@@ -22,283 +23,149 @@ const selectedReservation = computed(() =>
   store.reservations.find(r => r.id === selectedId.value) ?? null
 )
 
-// ── Filtre statut ────────────────────────────────────────────────────────────
+// ── Filtres ──────────────────────────────────────────────────────────────────
 const STATUS_TABS = [
   { key: 'all',            label: 'Tout' },
   { key: 'en_attente',     label: 'En attente' },
   { key: 'devis_realise',  label: 'Devis réalisé' },
-  { key: 'devis_confirme', label: 'Confirmé' },
+  { key: 'devis_confirme', label: 'Devis confirmé' },
   { key: 'terminee',       label: 'Terminée' },
   { key: 'annulee',        label: 'Annulée' },
 ]
 const filterStatus = ref('all')
+const search = ref('')
+
+const compte = computed(() => {
+  const parStatut = { all: store.reservations.length }
+  for (const r of store.reservations) parStatut[r.status] = (parStatut[r.status] ?? 0) + 1
+  return parStatut
+})
+
+const sansAccent = (s) => (s ?? '').toString().normalize('NFD').replace(/\p{M}/gu, '').toLowerCase()
+
+const produits = (r) => (r.lignes ?? [])
+  .map(l => l.produits_id?.name && ((l.quantity || 1) > 1 ? `${l.produits_id.name} × ${l.quantity}` : l.produits_id.name))
+  .filter(Boolean).join(', ')
+
+// Réservations du statut choisi qui correspondent à la recherche, de la plus récente à la plus ancienne
 const filteredList = computed(() => {
-  const list = store.reservations
-  if (filterStatus.value === 'all') return list
-  return list.filter(r => r.status === filterStatus.value)
+  const q = sansAccent(search.value).trim()
+  return store.reservations
+    .filter(r => filterStatus.value === 'all' || r.status === filterStatus.value)
+    .filter(r => !q || sansAccent(
+      [`n°${r.id}`, nomFiche(r.client), r.client?.company_name, r.client?.city, produits(r)].filter(Boolean).join(' ')
+    ).includes(q))
+    .sort((a, b) => (b.date_start ?? '').localeCompare(a.date_start ?? ''))
 })
 
-const fmtDate = (d) => d ? format(parseISO(d), 'd MMM yyyy', { locale: fr }) : '—'
-
-// ── Création réservation ─────────────────────────────────────────────────────
-const showCreate = ref(false)
-const saving     = ref(false)
-const createError = ref('')
-
-const allArticles = ref([])
-const allClients  = ref([])
-const loadingCreate = ref(false)
-
-async function openCreate() {
-  showCreate.value = true
-  createError.value = ''
-  resetForm()
-  loadingCreate.value = true
-  try {
-    const [arts, clients] = await Promise.all([getArticles(), getClients()])
-    allArticles.value = arts ?? []
-    allClients.value  = clients ?? []
-  } finally {
-    loadingCreate.value = false
-  }
+const jour = (iso, motif) => format(parseISO(iso), motif, { locale: fr })
+const periode = (r) => {
+  if (!r.date_start) return '—'
+  const jours = joursLocation(r.date_start, r.date_end)
+  return jours > 1
+    ? `${jour(r.date_start, 'd MMM')} → ${jour(r.date_end, 'd MMM yyyy')} · ${jours} jours`
+    : jour(r.date_start, 'd MMM yyyy')
 }
 
-const form = ref({
-  article_id: '',
-  date_start: '',
-  date_end:   '',
-  client_id:  '',
-  notes:      '',
-  delivery_address: '',
-})
-
-function resetForm() {
-  form.value = { article_id: '', date_start: '', date_end: '', client_id: '', notes: '', delivery_address: '' }
-}
-
-const selectedArticle = computed(() =>
-  allArticles.value.find(a => String(a.id) === String(form.value.article_id)) ?? null
-)
-
-const clientSearch = ref('')
-const filteredClients = computed(() => {
-  const q = clientSearch.value.toLowerCase()
-  return allClients.value.filter(c => {
-    const name = `${c.first_name ?? ''} ${c.last_name ?? ''} ${c.company_name ?? ''}`.toLowerCase()
-    return !q || name.includes(q)
-  })
-})
-
-const formValid = computed(() =>
-  form.value.article_id && form.value.date_start && form.value.date_end && form.value.client_id
-)
-
-async function submitCreate() {
-  if (!formValid.value) return
-  saving.value = true
-  createError.value = ''
-  try {
-    const art = selectedArticle.value
-    const produitId = art?.produit_id?.id ?? null
-
-    const newResa = await createReservation({
-      status:           'en_attente',
-      date_start:       form.value.date_start,
-      date_end:         form.value.date_end,
-      client:           Number(form.value.client_id),
-      notes:            form.value.notes || null,
-      delivery_address: form.value.delivery_address || null,
-      devis_realise_par: null,
-    })
-
-    if (produitId) {
-      await createReservationProduit({
-        reservations_id: newResa.id,
-        produits_id:     produitId,
-        quantity:        1,
-      })
-    }
-
-    if (form.value.article_id) {
-      await createReservationArticle({
-        reservations_id: newResa.id,
-        articles_id:     Number(form.value.article_id),
-      })
-    }
-
-    await store.fetchReservations()
-    showCreate.value = false
-    selectedId.value = newResa.id
-  } catch (err) {
-    createError.value = err?.response?.data?.errors?.[0]?.message ?? err.message ?? 'Erreur lors de la création'
-  } finally {
-    saving.value = false
-  }
-}
-
-const ETAT_LABEL = {
-  disponible: 'Disponible', loue: 'Loué',
-  en_maintenance: 'En maintenance', hors_service: 'Hors service',
+function formatCurrency(n) {
+  return new Intl.NumberFormat('fr-FR', { style: 'currency', currency: 'EUR', maximumFractionDigits: 0 }).format(n)
 }
 </script>
 
 <template>
-  <div class="p-6 max-w-5xl mx-auto">
-    <!-- ── En-tête ─────────────────────────────────────────────────── -->
-    <div class="flex items-center justify-between mb-6">
-      <div>
-        <h1 class="text-2xl font-bold">Réservations</h1>
-        <p class="text-sm text-base-content/50 mt-0.5">{{ store.reservations.length }} réservation{{ store.reservations.length > 1 ? 's' : '' }}</p>
-      </div>
-      <button class="btn btn-primary btn-sm" @click="openCreate">
-        + Nouvelle réservation
+  <div class="flex flex-col h-full overflow-hidden">
+
+    <!-- ── Page header ── -->
+    <div class="bg-white border-b border-gray-200 px-6 py-3 flex items-center gap-3 flex-shrink-0">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20" fill="currentColor" class="w-4 h-4 text-gray-400">
+        <path fill-rule="evenodd" d="M5.75 2a.75.75 0 0 1 .75.75V4h7V2.75a.75.75 0 0 1 1.5 0V4h.25A2.75 2.75 0 0 1 18 6.75v8.5A2.75 2.75 0 0 1 15.25 15h-1.5l.5 2.75a.75.75 0 0 1-1.47.26L12.38 15H7.62l-.4 2.01a.75.75 0 0 1-1.47-.26L6.25 15h-1.5A2.75 2.75 0 0 1 2 12.25v-8.5A2.75 2.75 0 0 1 4.75 4H5V2.75A.75.75 0 0 1 5.75 2Zm-1 5.5c-.69 0-1.25.56-1.25 1.25v3.5c0 .69.56 1.25 1.25 1.25h10.5c.69 0 1.25-.56 1.25-1.25v-3.5c0-.69-.56-1.25-1.25-1.25H4.75Z" clip-rule="evenodd"/>
+      </svg>
+      <h1 class="text-lg font-semibold text-gray-900">Réservations</h1>
+      <span class="text-xs bg-gray-100 text-gray-500 px-2 py-0.5 rounded-full font-medium">{{ store.reservations.length }}</span>
+      <button type="button"
+        class="ml-auto inline-flex items-center gap-1.5 text-xs px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg transition-colors"
+        @click="nouveauDevis.ouvrir()">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="w-3.5 h-3.5">
+          <path d="M8.75 3.75a.75.75 0 0 0-1.5 0v3.5h-3.5a.75.75 0 0 0 0 1.5h3.5v3.5a.75.75 0 0 0 1.5 0v-3.5h3.5a.75.75 0 0 0 0-1.5h-3.5v-3.5Z"/>
+        </svg>
+        Nouveau devis
       </button>
     </div>
 
-    <!-- ── Filtre statuts ──────────────────────────────────────────── -->
-    <div class="flex flex-wrap gap-1 mb-4">
-      <button
-        v-for="tab in STATUS_TABS"
-        :key="tab.key"
-        class="btn btn-xs"
-        :class="filterStatus === tab.key ? 'btn-primary' : 'btn-ghost'"
-        @click="filterStatus = tab.key"
-      >{{ tab.label }}</button>
-    </div>
+    <!-- ── Scrollable content ── -->
+    <div class="flex-1 overflow-y-auto bg-gray-100 p-6">
 
-    <!-- ── Liste ─────────────────────────────────────────────────────── -->
-    <div v-if="store.loading" class="flex justify-center py-16">
-      <span class="loading loading-spinner loading-lg"></span>
-    </div>
-
-    <div v-else-if="!filteredList.length" class="text-center py-16 text-base-content/40">
-      Aucune réservation{{ filterStatus !== 'all' ? ' pour ce statut' : '' }}
-    </div>
-
-    <div v-else class="rounded-box border border-base-200 overflow-hidden">
-      <table class="table table-sm w-full">
-        <thead class="bg-base-200 text-xs uppercase text-base-content/50">
-          <tr>
-            <th>Client</th>
-            <th>Période</th>
-            <th>Produits</th>
-            <th>Statut</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr
-            v-for="r in filteredList"
-            :key="r.id"
-            class="hover cursor-pointer border-b border-base-200 last:border-0"
-            @click="selectedId = r.id"
-          >
-            <td>
-              <div class="font-medium text-sm">{{ r.client?.first_name }} {{ r.client?.last_name }}</div>
-              <div v-if="r.client?.city" class="text-xs text-base-content/50">{{ r.client.city }}</div>
-            </td>
-            <td class="text-sm text-base-content/70">
-              {{ fmtDate(r.date_start) }} → {{ fmtDate(r.date_end) }}
-            </td>
-            <td>
-              <div v-if="r.produit_noms?.length" class="text-xs text-base-content/60">
-                {{ r.produit_noms.join(', ') }}
-              </div>
-              <span v-else class="text-xs text-base-content/30 italic">Aucun produit</span>
-            </td>
-            <td><StatusBadge :status="r.status" /></td>
-          </tr>
-        </tbody>
-      </table>
-    </div>
-
-    <!-- ── Modal création ─────────────────────────────────────────── -->
-    <Teleport to="body">
-      <div v-if="showCreate" class="modal modal-open">
-        <div class="modal-box w-11/12 max-w-xl max-h-[90vh] overflow-y-auto">
-          <button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2" @click="showCreate = false">✕</button>
-
-          <h3 class="font-bold text-xl mb-4">Nouvelle réservation</h3>
-
-          <div v-if="loadingCreate" class="flex justify-center py-8">
-            <span class="loading loading-spinner loading-md"></span>
-          </div>
-
-          <form v-else class="space-y-4" @submit.prevent="submitCreate">
-
-            <!-- Article -->
-            <div class="form-control">
-              <label class="label pb-1"><span class="label-text font-medium">Article <span class="text-error">*</span></span></label>
-              <select v-model="form.article_id" class="select select-bordered select-sm w-full" required>
-                <option value="" disabled>Sélectionner un article…</option>
-                <option v-for="art in allArticles" :key="art.id" :value="art.id">
-                  {{ art.reference }} — {{ art.produit_id?.name }}
-                  ({{ ETAT_LABEL[art.etat] ?? art.etat }}, {{ art.entrepot_id?.nom }})
-                </option>
-              </select>
-              <!-- Produit auto-détecté -->
-              <div v-if="selectedArticle" class="mt-1 text-xs text-base-content/50 pl-1">
-                Produit : <strong>{{ selectedArticle.produit_id?.name }}</strong>
-              </div>
-            </div>
-
-            <!-- Dates -->
-            <div class="grid grid-cols-2 gap-3">
-              <div class="form-control">
-                <label class="label pb-1"><span class="label-text font-medium">Date début <span class="text-error">*</span></span></label>
-                <input v-model="form.date_start" type="date" class="input input-bordered input-sm" required />
-              </div>
-              <div class="form-control">
-                <label class="label pb-1"><span class="label-text font-medium">Date fin <span class="text-error">*</span></span></label>
-                <input v-model="form.date_end" type="date" class="input input-bordered input-sm" :min="form.date_start" required />
-              </div>
-            </div>
-
-            <!-- Client -->
-            <div class="form-control">
-              <label class="label pb-1"><span class="label-text font-medium">Client <span class="text-error">*</span></span></label>
-              <input
-                v-model="clientSearch"
-                type="text"
-                placeholder="Rechercher un client…"
-                class="input input-bordered input-sm mb-1"
-              />
-              <select v-model="form.client_id" class="select select-bordered select-sm w-full" required>
-                <option value="" disabled>Sélectionner…</option>
-                <option v-for="c in filteredClients" :key="c.id" :value="c.id">
-                  {{ c.first_name }} {{ c.last_name }}{{ c.company_name ? ` (${c.company_name})` : '' }}
-                </option>
-              </select>
-            </div>
-
-            <!-- Adresse de livraison -->
-            <div class="form-control">
-              <label class="label pb-1"><span class="label-text font-medium">Adresse de livraison</span></label>
-              <input v-model="form.delivery_address" type="text" class="input input-bordered input-sm" placeholder="Laisser vide si identique au client" />
-            </div>
-
-            <!-- Notes -->
-            <div class="form-control">
-              <label class="label pb-1"><span class="label-text font-medium">Notes</span></label>
-              <textarea v-model="form.notes" class="textarea textarea-bordered textarea-sm resize-none" rows="2" placeholder="Informations complémentaires…" />
-            </div>
-
-            <!-- Erreur -->
-            <div v-if="createError" class="alert alert-error text-sm py-2">{{ createError }}</div>
-
-            <div class="flex gap-2 justify-end pt-2">
-              <button type="button" class="btn btn-sm btn-ghost" @click="showCreate = false">Annuler</button>
-              <button type="submit" class="btn btn-sm btn-primary" :disabled="saving || !formValid">
-                <span v-if="!saving">Créer la réservation</span>
-                <span v-else class="loading loading-spinner loading-xs"></span>
-              </button>
-            </div>
-          </form>
+      <!-- Filtre par statut + recherche -->
+      <div class="flex flex-wrap items-center gap-2 mb-4">
+        <button
+          v-for="tab in STATUS_TABS"
+          :key="tab.key"
+          type="button"
+          class="text-xs py-1.5 px-3 rounded-lg font-semibold transition-colors"
+          :class="filterStatus === tab.key ? 'bg-blue-600 text-white' : 'bg-white text-gray-500 hover:bg-gray-50'"
+          @click="filterStatus = tab.key"
+        >{{ tab.label }} <span class="font-normal opacity-70">{{ compte[tab.key] ?? 0 }}</span></button>
+        <div class="relative ml-auto w-72 max-w-full">
+          <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor"
+            class="w-3.5 h-3.5 text-gray-400 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none">
+            <path fill-rule="evenodd" d="M9.965 11.026a5 5 0 1 1 1.06-1.06l2.755 2.754a.75.75 0 1 1-1.06 1.06l-2.755-2.754ZM10.5 7a3.5 3.5 0 1 1-7 0 3.5 3.5 0 0 1 7 0Z" clip-rule="evenodd"/>
+          </svg>
+          <input v-model="search" type="text" placeholder="Client, produit ou n° de réservation" aria-label="Rechercher une réservation"
+            class="w-full text-sm pl-8 pr-3 py-1.5 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 bg-white" />
         </div>
-        <div class="modal-backdrop" @click="showCreate = false"></div>
       </div>
-    </Teleport>
 
-    <!-- ── Modal de détail ────────────────────────────────────────── -->
+      <!-- Liste -->
+      <div class="bg-white rounded-xl shadow-sm overflow-hidden">
+
+        <div v-if="chargement" class="p-8 text-center text-sm text-gray-400">Chargement…</div>
+
+        <div v-else-if="store.error" class="p-6 text-center text-red-500 text-sm">
+          Connexion Directus indisponible — {{ store.error }}
+        </div>
+
+        <div v-else-if="!filteredList.length" class="p-8 text-center text-sm text-gray-400">
+          Aucune réservation{{ search.trim() ? ' pour cette recherche' : filterStatus !== 'all' ? ' pour ce statut' : '' }}
+        </div>
+
+        <table v-else class="w-full text-sm">
+          <thead>
+            <tr class="bg-gray-50 border-b border-gray-100">
+              <th class="px-5 py-2.5 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Client</th>
+              <th class="px-5 py-2.5 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Période</th>
+              <th class="px-5 py-2.5 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Produits</th>
+              <th class="px-5 py-2.5 text-left text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Statut</th>
+              <th class="px-5 py-2.5 text-right text-[11px] font-semibold text-gray-400 uppercase tracking-wider">Total</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-gray-50">
+            <tr
+              v-for="r in filteredList"
+              :key="r.id"
+              class="hover:bg-gray-50 transition-colors cursor-pointer"
+              @click="selectedId = r.id"
+            >
+              <td class="px-5 py-3">
+                <div class="font-medium text-gray-900">{{ nomFiche(r.client) }}</div>
+                <div class="text-xs text-gray-400">n°{{ r.id }}<template v-if="r.client?.city"> · {{ r.client.city }}</template></div>
+              </td>
+              <td class="px-5 py-3 text-gray-500 whitespace-nowrap">{{ periode(r) }}</td>
+              <td class="px-5 py-3 text-xs text-gray-500">
+                <template v-if="produits(r)">{{ produits(r) }}</template>
+                <span v-else class="text-gray-300 italic">Aucun produit</span>
+              </td>
+              <td class="px-5 py-3"><StatusBadge :status="r.status" /></td>
+              <td class="px-5 py-3 text-right font-semibold text-gray-800 tabular-nums whitespace-nowrap">
+                {{ r.montant ? formatCurrency(r.montant) : '—' }}
+              </td>
+            </tr>
+          </tbody>
+        </table>
+
+      </div>
+    </div>
+
+    <!-- ── Modal de détail ── -->
     <ReservationModal
       :reservation="selectedReservation"
       @close="selectedId = null"

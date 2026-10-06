@@ -3,10 +3,12 @@ import { computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useReservationsStore } from '../stores/reservations'
 import { useAuthStore } from '../stores/auth'
+import { useNouveauDevisStore } from '../stores/nouveauDevis'
 
 const route = useRoute()
 const store = useReservationsStore()
 const auth  = useAuthStore()
+const nouveauDevis = useNouveauDevisStore()
 const pendingCount = computed(() => store.pendingCount)
 const logoSrc = import.meta.env.BASE_URL + 'Logo.png'
 
@@ -85,6 +87,21 @@ const NAV = [
           style="background:rgba(255,255,255,0.07);color:rgba(255,255,255,0.85);"
         />
       </div>
+    </div>
+
+    <!-- ── Nouveau devis : accessible depuis toutes les pages ── -->
+    <div class="px-3 pb-3">
+      <button
+        type="button"
+        class="w-full flex items-center justify-center gap-2 px-3 py-2 rounded-xl text-sm font-semibold text-white shadow-sm transition-opacity hover:opacity-90"
+        style="background: linear-gradient(135deg, #3b82f6, #2563eb);"
+        @click="nouveauDevis.ouvrir()"
+      >
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="w-4 h-4">
+          <path d="M8.75 3.75a.75.75 0 0 0-1.5 0v3.5h-3.5a.75.75 0 0 0 0 1.5h3.5v3.5a.75.75 0 0 0 1.5 0v-3.5h3.5a.75.75 0 0 0 0-1.5h-3.5v-3.5Z"/>
+        </svg>
+        Nouveau devis
+      </button>
     </div>
 
     <!-- ── Nav ── -->

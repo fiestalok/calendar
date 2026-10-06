@@ -1,4 +1,5 @@
 import axios from 'axios'
+import { endOfDay, parseISO, startOfDay } from 'date-fns'
 
 const BASE_URL = import.meta.env.VITE_DIRECTUS_URL
 
@@ -166,7 +167,7 @@ export const getReservationsByClient = (clientId) =>
 export const getReservationProduits = (reservationId) =>
   request('GET', '/items/reservations_produits', null, {
     filter: { reservations_id: { _eq: reservationId } },
-    fields: 'id,produits_id.id,produits_id.name,produits_id.images_urls,produits_id.image,produits_id.price,quantity,unit_price',
+    fields: 'id,produits_id.id,produits_id.name,produits_id.images_urls,produits_id.image,produits_id.price,produits_id.jours_avant,produits_id.jours_apres,quantity,unit_price',
     limit: -1,
   }).catch(err => { console.warn('[getReservationProduits]', err.message); return [] })
 
@@ -218,8 +219,15 @@ export const getReservationDevisOptions = (id) =>
 export const patchReservation = (id, data) =>
   request('PATCH', `/items/reservations/${id}`, data)
 
+// Empreinte enregistrée avec le devis généré (voir empreinteDevis) ; null si elle est absente ou illisible
+export const getDevisEmpreinte = (id) =>
+  request('GET', `/items/reservations/${id}`, null, { fields: 'fichier_devis.description' })
+    .then(r => r?.fichier_devis?.description ?? null)
+    .catch(() => null)
+
 export const createReservation = (data) => request('POST', '/items/reservations', data)
 export const createReservationProduit = (data) => request('POST', '/items/reservations_produits', data)
+export const patchReservationProduit = (id, data) => request('PATCH', `/items/reservations_produits/${id}`, data)
 export const deleteReservationProduit = (id) => request('DELETE', `/items/reservations_produits/${id}`)
 
 export const getClients = (params = {}) =>
@@ -378,15 +386,16 @@ export const getArticlesByProduit = (produitIds) =>
 export const createReservationArticle = (data) =>
   request('POST', '/items/reservations_articles', data)
 
-// Retourne les IDs d'articles déjà liés à une autre réservation sur la même plage de dates
+// Retourne les IDs d'articles déjà liés à une autre réservation sur la même plage de dates.
+// La comparaison porte sur des journées entières : avec ou sans horaires, une location occupe ses unités toute la journée.
 export const getReservedArticleIdsForDates = (articleIds, dateStart, dateEnd, excludeResaId) =>
   request('GET', '/items/reservations_articles', null, {
     filter: {
       _and: [
         { articles_id: { _in: articleIds } },
         { reservations_id: { status: { _neq: 'annulee' } } },
-        { reservations_id: { date_start: { _lte: dateEnd } } },
-        { reservations_id: { date_end: { _gte: dateStart } } },
+        { reservations_id: { date_start: { _lte: endOfDay(parseISO(dateEnd)).toISOString() } } },
+        { reservations_id: { date_end: { _gte: startOfDay(parseISO(dateStart)).toISOString() } } },
         ...(excludeResaId ? [{ reservations_id: { _neq: excludeResaId } }] : []),
       ],
     },

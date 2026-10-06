@@ -3,12 +3,17 @@ import { computed, onMounted, ref } from 'vue'
 import { differenceInCalendarDays, format, isValid, parseISO, startOfDay } from 'date-fns'
 import { fr } from 'date-fns/locale'
 import { useReservationsStore } from '../stores/reservations'
+import { useNouveauDevisStore } from '../stores/nouveauDevis'
 import { joursLocation, totalLigne } from '../utils/tarifs'
+import { heureLocale } from '../utils/dates'
+import { nomFiche } from '../utils/clients'
 import ReservationModal from '../components/ReservationModal.vue'
+import StatusBadge from '../components/StatusBadge.vue'
 
 const HORIZON = 7   // jours affichés dans l'agenda, aujourd'hui compris
 
 const store = useReservationsStore()
+const nouveauDevis = useNouveauDevisStore()
 
 onMounted(() => store.fetchReservations())
 
@@ -36,7 +41,6 @@ const cetteAnnee = (r) => debut(r).getFullYear() === anneeCourante
 const ceMois     = (r) => cetteAnnee(r) && debut(r).getMonth() === moisCourant
 
 const jour    = (d, motif) => isValid(d) ? format(d, motif, { locale: fr }) : '—'
-const heure   = (d) => (d.getHours() || d.getMinutes()) ? format(d, d.getMinutes() ? "H'h'mm" : "H'h'") : null
 const pluriel = (n, mot) => `${n} ${mot}${n > 1 ? 's' : ''}`
 const majuscule = (texte) => texte.charAt(0).toUpperCase() + texte.slice(1)
 
@@ -51,8 +55,7 @@ const formatNombre = (n) => new Intl.NumberFormat('fr-FR', { maximumFractionDigi
 const avecStatut = (...statuts) => store.reservations.filter(r => statuts.includes(r.status))
 const somme      = (reservations) => reservations.reduce((sum, r) => sum + (r.montant || 0), 0)
 
-const nomClient = (r) =>
-  [r.client?.first_name, r.client?.last_name].filter(Boolean).join(' ') || r.client?.company_name || '—'
+const nomClient = (r) => nomFiche(r.client)
 
 // Période d'une réservation ; l'année n'est précisée que si ce n'est pas l'année en cours
 const periode = (r) => {
@@ -93,14 +96,6 @@ const chiffres = computed(() => [
 ])
 
 // ── Historique des réservations ──────────────────────────────────────────────
-const STATUS = {
-  en_attente:     { label: 'En attente',    cls: 'bg-amber-100 text-amber-800' },
-  devis_realise:  { label: 'Devis réalisé', cls: 'bg-blue-100 text-blue-800' },
-  devis_confirme: { label: 'Confirmé',      cls: 'bg-emerald-100 text-emerald-800' },
-  terminee:       { label: 'Terminée',      cls: 'bg-gray-100 text-gray-600' },
-  annulee:        { label: 'Annulée',       cls: 'bg-red-100 text-red-700' },
-}
-
 // Toutes les réservations, de la plus récente à la plus ancienne (date de début)
 const historique = computed(() => [...store.reservations].sort((a, b) => debut(b) - debut(a)))
 
@@ -118,13 +113,14 @@ const lieu = (r) => r.delivery_address || [r.client?.zip_code, r.client?.city].f
 const agenda = computed(() => {
   const entrees = []
   for (const r of avecStatut('en_attente', 'devis_realise', 'devis_confirme')) {
-    for (const [d, depart] of [[debut(r), true], [fin(r), false]]) {
+    for (const [iso, depart] of [[r.date_start, true], [r.date_end ?? r.date_start, false]]) {
+      const d    = date(iso)
       const dans = dansJours(d)
       if (!(dans >= 0 && dans < HORIZON)) continue
       const livree = r.livraison
       entrees.push({
         cle: `${r.id}-${depart ? 'depart' : 'retour'}`, id: r.id, date: d,
-        quand:     [jourAgenda(d, dans), heure(d)].filter(Boolean).join(' · '),
+        quand:     [jourAgenda(d, dans), heureLocale(iso)].filter(Boolean).join(' · '),
         type:      livree ? (depart ? ['Livraison', r.distance_km ? `${r.distance_km} km` : null].filter(Boolean).join(' · ') : 'Reprise du matériel')
                           : (depart ? 'Retrait au dépôt' : 'Retour au dépôt'),
         livraison: livree && depart,
@@ -185,6 +181,14 @@ const produitsLoues = computed(() => {
         <h1 class="text-lg font-semibold text-gray-900">Tableau de bord</h1>
         <p class="text-xs text-gray-400 capitalize mt-0.5">{{ dateLabel }}</p>
       </div>
+      <button type="button"
+        class="ml-auto mr-2 inline-flex items-center gap-1.5 text-xs px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white font-semibold rounded-lg transition-colors"
+        @click="nouveauDevis.ouvrir()">
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="w-3.5 h-3.5">
+          <path d="M8.75 3.75a.75.75 0 0 0-1.5 0v3.5h-3.5a.75.75 0 0 0 0 1.5h3.5v3.5a.75.75 0 0 0 1.5 0v-3.5h3.5a.75.75 0 0 0 0-1.5h-3.5v-3.5Z"/>
+        </svg>
+        Nouveau devis
+      </button>
       <RouterLink
         to="/planning"
         class="inline-flex items-center gap-1.5 text-xs font-medium text-blue-600 bg-blue-50 hover:bg-blue-100 px-3 py-1.5 rounded-lg transition-colors"
@@ -234,8 +238,7 @@ const produitsLoues = computed(() => {
                 <span class="block text-sm font-medium text-gray-900 truncate">{{ nomClient(r) }}</span>
                 <span class="block text-xs text-gray-500 truncate">{{ [periode(r), produits(r)].filter(Boolean).join(' · ') }}</span>
               </span>
-              <span class="text-[11px] px-2 py-0.5 rounded-full font-semibold shrink-0"
-                :class="STATUS[r.status]?.cls ?? 'bg-gray-100 text-gray-600'">{{ STATUS[r.status]?.label ?? r.status }}</span>
+              <StatusBadge :status="r.status" class="shrink-0" />
               <span class="w-20 text-right text-sm font-semibold text-gray-800 shrink-0 tabular-nums">
                 {{ r.montant ? formatCurrency(r.montant) : '—' }}
               </span>

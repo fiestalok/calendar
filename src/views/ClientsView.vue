@@ -7,6 +7,7 @@ import { useContactsStore } from '../stores/contacts'
 import { useCommentsStore } from '../stores/comments'
 import { useAuthStore } from '../stores/auth'
 import { uploadFile, getFactures, getFileUrl, getReservationsByClient } from '../api/directus'
+import { STATUTS } from '../utils/statuts'
 import CommentSection from '../components/CommentSection.vue'
 
 const store         = useClientsStore()
@@ -385,13 +386,8 @@ const clientReservations  = ref([])
 const reservationsLoading = ref(false)
 const selectedReservation = ref(null)
 
-const RESERVATION_STATUS = {
-  en_attente:     { label: 'En attente',    cls: 'bg-amber-100 text-amber-700' },
-  devis_realise:  { label: 'Devis réalisé', cls: 'bg-blue-100 text-blue-700' },
-  devis_confirme: { label: 'Confirmée',     cls: 'bg-blue-100 text-blue-700' },
-  terminee:       { label: 'Terminée',      cls: 'bg-gray-100 text-gray-600' },
-  annulee:        { label: 'Annulée',       cls: 'bg-red-100 text-red-600' },
-}
+// Mêmes libellés et couleurs de statut que sur les autres écrans
+const RESERVATION_STATUS = STATUTS
 
 watch([selectedId, activeTab], async ([id, tab]) => {
   if (!id || tab !== 'devis') return

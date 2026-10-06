@@ -6,8 +6,15 @@ import { useRouter } from 'vue-router'
 import { useReservationsStore } from '../stores/reservations'
 import { useAuthStore } from '../stores/auth'
 import { useProduitsStore } from '../stores/produits'
+import { useClientsStore } from '../stores/clients'
+import { useArticlesStore } from '../stores/articles'
 import { livraisonFee, joursLocation, prixLigne, totalProduits, remiseLivraison, plafonneRemise } from '../utils/tarifs'
+import { heureLocale, horodatage, jourSaisi, heureSaisie } from '../utils/dates'
+import { genererDevisReservation, empreinteDevis } from '../utils/devisReservation'
+import { nomFiche, nomClient, coordonnees, chercherClients } from '../utils/clients'
+import { demandeProduit, disponibilite, unitesParProduit } from '../utils/disponibilite'
 import {
+  patchReservationProduit, getDevisEmpreinte,
   getReservationProduits, createReservationProduit, deleteReservationProduit,
   getReservationArticles, getReservationArticleIds,
   getArticlesForReservation, getArticlesByIds,
@@ -62,6 +69,15 @@ const remise             = ref(false)
 const remiseManuelleLibelle = ref('')
 const remiseManuelleMontant = ref(0)
 const tarifsCharges      = ref(false)   // vrai une fois les produits et paramètres de prix chargés
+const adresseLivraison   = ref('')
+const empreinteEnregistree = ref(null)  // empreinte du dernier devis généré (voir empreinteDevis)
+const periodeEdition     = ref(null)    // { dateDebut, heureDebut, dateFin, heureFin } pendant la modification des dates
+const conflitsDates      = ref([])      // unités affectées déjà prises aux nouvelles dates
+const changementClient   = ref(false)
+const rechercheClient    = ref('')
+
+const clientsStore  = useClientsStore()
+const articlesStore = useArticlesStore()
 
 // ── Consommables & setup par article ─────────────────────────────────────────
 // { [produitId]: [{ gamme: {id,nom}, consoItems: [...], materielArts: [...] }] }
@@ -186,15 +202,23 @@ watch(() => props.reservation?.id, async (id) => {
   setupState.value        = {}
   remiseManuelleLibelle.value = ''
   remiseManuelleMontant.value = 0
+  empreinteEnregistree.value = null
+  periodeEdition.value   = null
+  conflitsDates.value    = []
+  changementClient.value = false
+  adresseLivraison.value = props.reservation?.delivery_address ?? ''
   if (!id) { produits.value = []; validatedBy.value = {}; return }
 
+  articlesStore.fetch()
   try {
-    const [rawP, rawV, rawConso, rawOptions] = await Promise.all([
+    const [rawP, rawV, rawConso, rawOptions, empreinte] = await Promise.all([
       getReservationProduits(id),
       getReservationValidation(id),
       getReservationConsommables(id),
       getReservationDevisOptions(id),
+      getDevisEmpreinte(id),
     ])
+    empreinteEnregistree.value = empreinte
     produits.value         = rawP ?? []
     validatedBy.value      = rawV ?? {}
     livraison.value        = !!(rawV?.livraison)
@@ -218,7 +242,7 @@ watch(() => props.reservation?.status, () => { clientContacte.value = false; dev
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const client  = computed(() => props.reservation?.client)
 const fmtDate     = (d) => d ? format(parseISO(d), "EEEE d MMMM yyyy", { locale: fr }) : '—'
-const fmtTime     = (d) => { if (!d) return null; const dt = parseISO(d); const h = dt.getHours(); const m = dt.getMinutes(); return (h || m) ? `${String(h).padStart(2,'0')}h${m ? String(m).padStart(2,'0') : ''}` : null }
+const fmtTime     = heureLocale
 const clientInitials = computed(() => {
   const c = client.value
   if (!c) return '?'
@@ -236,6 +260,138 @@ const devisGenereUrl = computed(() =>
 
 // Message de confirmation, avec rappel si un devis déjà généré devient périmé
 const devisARegenerer = (msg) => devisGenereUrl.value ? `${msg} – pensez à regénérer le devis` : msg
+
+const euros = (n) => new Intl.NumberFormat('fr-FR', {
+  style: 'currency', currency: 'EUR', minimumFractionDigits: Number.isInteger(n) ? 0 : 2,
+}).format(n)
+const erreurApi = (err) => err?.response?.data?.errors?.[0]?.message ?? err?.message ?? 'erreur'
+const champ = 'w-full text-sm px-3 py-2 border border-gray-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-400 bg-white'
+
+// La réservation se modifie tant que le devis n'est pas signé
+const modifiable = computed(() => ['en_attente', 'devis_realise'].includes(props.reservation?.status))
+
+// ── Devis à jour ou non ───────────────────────────────────────────────────────
+// Réservation telle que la fenêtre l'affiche, avec ses paramètres de prix : c'est elle que le devis imprime
+const reservationDevis = computed(() => ({
+  ...props.reservation,
+  livraison:      livraison.value,
+  distance_km:    distanceKm.value,
+  remise:         remise.value,
+  remise_libelle: remiseManuelleLibelle.value,
+  remise_montant: remiseManuelleMontant.value,
+}))
+// Le devis généré ne correspond plus à la réservation (inconnu pour les devis antérieurs à l'empreinte)
+const devisPerime = computed(() =>
+  !!devisGenereUrl.value && !!empreinteEnregistree.value && tarifsCharges.value &&
+  empreinteEnregistree.value !== empreinteDevis(reservationDevis.value, client.value, produits.value)
+)
+
+// ── Modification des dates ────────────────────────────────────────────────────
+const periodeInvalide = computed(() => {
+  const p = periodeEdition.value
+  return !p || !p.dateDebut || !p.dateFin || p.dateFin < p.dateDebut ||
+    (p.dateFin === p.dateDebut && !!p.heureDebut && !!p.heureFin && p.heureFin < p.heureDebut)
+})
+
+function modifierPeriode() {
+  const r = props.reservation
+  periodeEdition.value = {
+    dateDebut: jourSaisi(r.date_start), heureDebut: heureSaisie(r.date_start),
+    dateFin:   jourSaisi(r.date_end),   heureFin:   heureSaisie(r.date_end),
+  }
+}
+
+async function enregistrerPeriode() {
+  if (periodeInvalide.value) return
+  const p = periodeEdition.value
+  loading.value = 'periode'
+  try {
+    const dates = { date_start: horodatage(p.dateDebut, p.heureDebut), date_end: horodatage(p.dateFin, p.heureFin) }
+    await patchReservation(props.reservation.id, dates)
+    store.updateField(props.reservation.id, dates)
+    periodeEdition.value = null
+    // Les unités déjà affectées peuvent être prises par une autre réservation aux nouvelles dates
+    const affectes = linkedArticles.value.map(la => la.article).filter(a => a?.id)
+    const prises   = affectes.length
+      ? new Set(await getReservedArticleIdsForDates(affectes.map(a => a.id), dates.date_start, dates.date_end, props.reservation.id))
+      : new Set()
+    conflitsDates.value = affectes.filter(a => prises.has(a.id)).map(a => a.reference || a.name)
+    showToast(devisARegenerer('Dates enregistrées'), 'success')
+  } catch (err) {
+    showToast(`Dates non enregistrées : ${erreurApi(err)}`, 'error')
+  } finally {
+    loading.value = null
+  }
+}
+
+// ── Changement de client ──────────────────────────────────────────────────────
+const clientsTrouves = computed(() => chercherClients(clientsStore.clients, rechercheClient.value))
+
+function ouvrirChangementClient() {
+  rechercheClient.value  = ''
+  changementClient.value = true
+  clientsStore.fetch()
+}
+
+async function changerClient(c) {
+  loading.value = 'client'
+  try {
+    await patchReservation(props.reservation.id, { client: c.id })
+    await store.fetchReservations()
+    changementClient.value = false
+    showToast(devisARegenerer('Client modifié'), 'success')
+  } catch (err) {
+    showToast(`Client non modifié : ${erreurApi(err)}`, 'error')
+  } finally {
+    loading.value = null
+  }
+}
+
+// ── Quantités et adresse de livraison ─────────────────────────────────────────
+async function changerQuantite(item, champ) {
+  const quantity = Math.max(1, Math.floor(Number(champ.value) || 1))
+  champ.value = quantity
+  if (quantity === (item.quantity || 1)) return
+  try {
+    await patchReservationProduit(item.id, { quantity })
+    produits.value = produits.value.map(p => p.id === item.id ? { ...p, quantity } : p)
+    await syncStoreProduits()
+  } catch (err) {
+    champ.value = item.quantity || 1
+    showToast(`Quantité non enregistrée : ${erreurApi(err)}`, 'error')
+  }
+}
+
+async function enregistrerAdresse() {
+  const delivery_address = adresseLivraison.value.trim() || null
+  if (delivery_address === (props.reservation.delivery_address ?? null)) return
+  try {
+    await patchReservation(props.reservation.id, { delivery_address })
+    store.updateField(props.reservation.id, { delivery_address })
+  } catch (err) {
+    showToast(`Adresse non enregistrée : ${erreurApi(err)}`, 'error')
+  }
+}
+
+// ── Disponibilité des produits sans unité affectée ───────────────────────────
+const TON = { ok: 'bg-emerald-100 text-emerald-800', attention: 'bg-amber-100 text-amber-800', alerte: 'bg-red-100 text-red-700' }
+
+// Même calcul que sur l'écran « Nouveau devis », en écartant cette réservation de la demande
+const dispos = computed(() => {
+  const r = props.reservation
+  if (!r?.date_start || !modifiable.value || articlesStore.loading || articlesStore.error) return {}
+  const unites = unitesParProduit(articlesStore.articles)
+  const autres = store.reservations.filter(x => x.id !== r.id)
+  const parProduit = {}
+  for (const p of produits.value) {
+    const produit = p.produits_id
+    if (!produit?.id) continue
+    parProduit[produit.id] = disponibilite(
+      unites[produit.id] ?? 0, p.quantity || 1, demandeProduit(produit, r.date_start, r.date_end, autres)
+    )
+  }
+  return parProduit
+})
 
 // ── Actions ───────────────────────────────────────────────────────────────────
 const actions = computed(() => {
@@ -267,21 +423,23 @@ const allProductsSetup = computed(() =>
   produits.value.every(p => productArticleGroups.value[p.produits_id?.id]?.principal?.length > 0)
 )
 
+// Un devis peut partir sans unité affectée : l'affectation n'est exigée qu'à la signature
 const confirmBlocked = computed(() => {
   const s = props.reservation?.status
-  if (s === 'en_attente') return !allProductsSetup.value || !devisGenereUrl.value || !clientContacte.value
-  if (s === 'devis_realise') return !signedDevisUrl.value
+  if (s === 'en_attente') return !devisGenereUrl.value || devisPerime.value || !clientContacte.value
+  if (s === 'devis_realise') return !signedDevisUrl.value || !allProductsSetup.value
   return false
 })
 
 const confirmBlockedReason = computed(() => {
   const s = props.reservation?.status
   if (s === 'en_attente') {
-    if (!allProductsSetup.value) return 'Configurez tous les produits'
     if (!devisGenereUrl.value) return 'Générez le devis'
+    if (devisPerime.value) return 'Regénérez le devis'
     if (!clientContacte.value) return 'Cochez la confirmation client'
   }
   if (!signedDevisUrl.value) return 'Ajoutez le devis signé'
+  if (!allProductsSetup.value) return 'Configurez tous les produits'
   return ''
 })
 
@@ -405,8 +563,15 @@ async function toggleLivraison(val) {
   try {
     // livraison et installation sont des champs entiers dans Directus : 1/0, pas true/false
     const flag = val ? 1 : 0
-    await patchReservation(props.reservation.id, { livraison: flag, installation: flag, distance_km: val ? distanceKm.value : 0 })
-    store.updateField(props.reservation.id, { livraison: val, distance_km: distanceKm.value })
+    // delivery (la demande faite sur le site, affichée sur la page de suivi du client) suit la décision prise ici
+    await patchReservation(props.reservation.id, { livraison: flag, installation: flag, delivery: val, distance_km: val ? distanceKm.value : 0 })
+    store.updateField(props.reservation.id, { livraison: val, delivery: val, distance_km: distanceKm.value })
+    // À défaut d'adresse de livraison, celle du client est proposée
+    if (val && !adresseLivraison.value) {
+      const c = client.value
+      adresseLivraison.value = [c?.address, [c?.zip_code, c?.city].filter(Boolean).join(' ')].filter(Boolean).join(', ')
+      await enregistrerAdresse()
+    }
   } catch (err) {
     showToast(`Livraison non enregistrée : ${err?.response?.data?.errors?.[0]?.message ?? err?.message ?? 'erreur'}`, 'error')
   }
@@ -470,72 +635,10 @@ async function saveRemiseManuelle() {
 async function generateDevis() {
   loading.value = 'generate_devis'
   try {
-    const r = props.reservation
-    const c = client.value
-    const { buildDevisPdf, loadDevisFonts } = await import('../utils/devisPdf')
-
-    const lignes = produits.value.map(p => ({
-      designation: p.produits_id?.name ?? '—',
-      quantite:    p.quantity ?? 1,
-      prixTTC:     prixLigne(p),
-      jours:       jours.value,
-    }))
-    if (livraison.value) {
-      const km   = distanceKm.value
-      const zone = km <= 15 ? '0–15 km' : km <= 30 ? '15–30 km' : km <= 50 ? '30–50 km'
-                 : km <= 80 ? '50–80 km' : km <= 120 ? '80–120 km' : '> 120 km'
-      lignes.push({
-        designation: `Livraison & installation — forfait ${zone}`,
-        detail:      'Livraison, installation et désinstallation incluses',
-        quantite:    1,
-        prixTTC:     livraisonMontant.value,
-      })
-    }
-    if (remiseMontantTTC.value > 0) {
-      lignes.push({
-        designation: 'Remise connaissance',
-        detail:      remiseDescription.value,
-        quantite:    1,
-        prixTTC:     -remiseMontantTTC.value,
-      })
-    }
-    if (remiseManuelleTTC.value > 0) {
-      lignes.push({
-        designation: remiseManuelleLibelle.value.trim() || 'Remise',
-        quantite:    1,
-        prixTTC:     -remiseManuelleTTC.value,
-      })
-    }
-
-    // Devis + conditions générales de location dans un seul PDF
-    const pdfBytes = await buildDevisPdf({
-      numero:       r.id,
-      dateEmission: new Date(),
-      client: {
-        societe:    c?.company_name,
-        prenom:     c?.first_name,
-        nom:        c?.last_name,
-        adresse:    c?.address,
-        codePostal: c?.zip_code,
-        ville:      c?.city,
-        telephone:  c?.phone,
-        email:      c?.email,
-      },
-      debut:      r.date_start,
-      fin:        r.date_end,
-      lieu:       r.delivery_address,
-      livraison:  livraison.value,
-      lignes,
-      avecTVA:    avecTVA.value,
-      notes:      r.notes,
-    }, await loadDevisFonts(import.meta.env.BASE_URL + 'fonts/'))
-
-    const blob = new Blob([pdfBytes], { type: 'application/pdf' })
-    const fd   = new FormData()
-    fd.append('file', blob, `devis-reservation-${r.id}.pdf`)
-    const uploaded = await uploadFile(fd)
-    await patchReservation(r.id, { fichier_devis: uploaded.id })
-    validatedBy.value = { ...validatedBy.value, fichier_devis: uploaded.id }
+    const r = reservationDevis.value
+    const fichier = await genererDevisReservation(r, client.value, produits.value, { avecTVA: avecTVA.value })
+    validatedBy.value = { ...validatedBy.value, fichier_devis: fichier }
+    empreinteEnregistree.value = empreinteDevis(r, client.value, produits.value)
     showToast('Devis généré avec succès', 'success')
   } catch (err) {
     console.error(err)
@@ -603,7 +706,10 @@ async function confirmProductAdd() {
       id:          created?.id,
       quantity,
       unit_price:  p.prix_location,
-      produits_id: { id: p.id, name: p.nom, images_urls: p.images_urls, image: p.image, price: p.prix_location },
+      produits_id: {
+        id: p.id, name: p.nom, images_urls: p.images_urls, image: p.image, price: p.prix_location,
+        jours_avant: p.jours_avant, jours_apres: p.jours_apres,
+      },
     }]
     await syncStoreProduits()
     step.value = 'detail'
@@ -1237,7 +1343,13 @@ async function confirmStepBack() {
           <div v-if="step === 'detail'" class="flex items-center gap-2 pb-[30px]">
             <span class="text-lg font-bold text-base-content/90 font-mono">Réservation n°{{ reservation.id }}</span>
             <span class="text-base-content/25 text-lg font-light">—</span>
-            <span class="text-base font-semibold text-base-content/55 truncate">{{ client?.first_name }} {{ client?.last_name }}</span>
+            <span class="text-base font-semibold text-base-content/55 truncate">{{ nomFiche(client) }}</span>
+            <!-- Total du devis, toujours visible (la marge laisse la place du bouton fermer) -->
+            <div v-if="tarifsCharges" class="ml-auto mr-8 flex items-center gap-3 shrink-0">
+              <span v-if="devisPerime" class="text-[11px] font-semibold px-2 py-0.5 rounded-full bg-amber-100 text-amber-800">Devis à regénérer</span>
+              <span class="text-xs text-base-content/40">Total du devis</span>
+              <span class="text-xl font-bold text-base-content/90 tabular-nums">{{ euros(montantTotal) }}</span>
+            </div>
           </div>
           <div class="flex items-start pt-[15px] pb-[30px]">
 
@@ -1371,6 +1483,24 @@ async function confirmStepBack() {
               <div class="px-4 py-2.5 border-b border-blue-100 bg-blue-50 flex items-center gap-2">
                 <div class="w-0.5 h-3.5 bg-blue-400 rounded-full shrink-0"></div>
                 <span class="text-xs font-semibold text-gray-500 uppercase tracking-wide">Client</span>
+                <button v-if="changementClient" type="button" class="ml-auto btn btn-xs btn-ghost text-base-content/50" @click="changementClient = false">Annuler</button>
+                <button v-else-if="modifiable" type="button" class="ml-auto btn btn-xs btn-ghost text-base-content/50" @click="ouvrirChangementClient">Changer</button>
+              </div>
+              <!-- Remplacement par un autre client existant -->
+              <div v-if="changementClient" class="px-4 py-3 border-b border-gray-100 bg-base-200/30">
+                <input v-model="rechercheClient" type="text" autocomplete="off"
+                  placeholder="Nom, téléphone ou e-mail du client" aria-label="Rechercher un autre client" :class="champ" />
+                <div v-if="clientsTrouves.length" class="mt-2 rounded-lg border border-gray-200 divide-y divide-gray-100 overflow-hidden bg-white">
+                  <button v-for="c in clientsTrouves" :key="c.id" type="button"
+                    class="w-full block px-3 py-2 text-left hover:bg-blue-50 transition-colors"
+                    :disabled="loading === 'client'" @click="changerClient(c)">
+                    <span class="block text-sm font-medium text-gray-900 truncate">{{ nomClient(c) }}</span>
+                    <span class="block text-xs text-gray-500 truncate">{{ coordonnees(c) || 'Aucune coordonnée' }}</span>
+                  </button>
+                </div>
+                <p v-else class="text-xs text-gray-400 mt-2">
+                  {{ rechercheClient.trim().length >= 2 ? 'Aucun client trouvé. Un nouveau client se crée depuis « Nouveau devis » ou la page Clients.' : 'Saisissez au moins deux lettres.' }}
+                </p>
               </div>
               <div class="px-4 py-3 border-b border-gray-100 flex items-center gap-3">
                 <div class="w-10 h-10 rounded-full flex items-center justify-center text-sm font-bold flex-shrink-0"
@@ -1412,8 +1542,31 @@ async function confirmStepBack() {
                 <div class="w-0.5 h-3.5 bg-blue-400 rounded-full shrink-0"></div>
                 <span class="text-xs font-semibold text-gray-500 uppercase tracking-wide">Période</span>
                 <span class="ml-auto text-[11px] font-semibold text-blue-500">{{ jours }} jour{{ jours > 1 ? 's' : '' }} de location</span>
+                <button v-if="modifiable && !periodeEdition" type="button" class="btn btn-xs btn-ghost text-base-content/50" @click="modifierPeriode">Modifier</button>
               </div>
-              <div class="flex items-stretch divide-x divide-blue-100">
+              <!-- Modification des dates et des horaires -->
+              <div v-if="periodeEdition" class="p-4">
+                <div class="grid grid-cols-[3rem_1fr_7.5rem] gap-x-3 gap-y-2 items-center">
+                  <label for="reservation-debut" class="text-xs font-semibold text-gray-500">Début</label>
+                  <input id="reservation-debut" v-model="periodeEdition.dateDebut" type="date" :class="champ" />
+                  <input v-model="periodeEdition.heureDebut" type="time" aria-label="Heure de début (facultative)" :class="champ" />
+                  <label for="reservation-fin" class="text-xs font-semibold text-gray-500">Fin</label>
+                  <input id="reservation-fin" v-model="periodeEdition.dateFin" type="date" :min="periodeEdition.dateDebut" :class="champ" />
+                  <input v-model="periodeEdition.heureFin" type="time" aria-label="Heure de fin (facultative)" :class="champ" />
+                </div>
+                <div class="flex items-center gap-2 mt-3">
+                  <span class="flex-1 text-xs" :class="periodeInvalide ? 'text-red-500' : 'text-gray-400'">
+                    {{ periodeInvalide ? 'La fin doit être après le début.' : 'Les heures sont facultatives.' }}
+                  </span>
+                  <button type="button" class="px-3 py-1.5 text-xs font-semibold text-gray-600 border border-gray-200 rounded-lg hover:bg-gray-50 transition-colors"
+                    @click="periodeEdition = null">Annuler</button>
+                  <button type="button" class="px-3 py-1.5 text-xs font-semibold bg-blue-600 text-white rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
+                    :disabled="periodeInvalide || loading === 'periode'" @click="enregistrerPeriode">
+                    {{ loading === 'periode' ? 'Enregistrement…' : 'Enregistrer' }}
+                  </button>
+                </div>
+              </div>
+              <div v-else class="flex items-stretch divide-x divide-blue-100">
                 <div class="flex-1 px-4 py-3">
                   <p class="text-[10px] font-semibold text-base-content/40 uppercase mb-0.5">Début</p>
                   <p class="text-sm font-semibold capitalize">{{ fmtDate(reservation.date_start) }}</p>
@@ -1430,6 +1583,9 @@ async function confirmStepBack() {
                   <p v-if="fmtTime(reservation.date_end)" class="text-xs text-blue-500 font-semibold mt-0.5">{{ fmtTime(reservation.date_end) }}</p>
                 </div>
               </div>
+              <p v-if="conflitsDates.length" class="px-4 py-2 border-t border-amber-200 bg-amber-50 text-xs text-amber-800">
+                {{ conflitsDates.join(', ') }} : déjà réservé{{ conflitsDates.length > 1 ? 's' : '' }} sur cette période par une autre réservation.
+              </p>
             </div>
 
             </div><!-- end grid client+dates -->
@@ -1486,11 +1642,26 @@ async function confirmStepBack() {
                     <div v-else class="w-9 h-9 bg-base-300 rounded-lg flex items-center justify-center shrink-0 text-base-content/30 text-xs font-bold">?</div>
                     <div class="flex-1 min-w-0">
                       <p class="font-semibold text-sm truncate">{{ item.produits_id?.name || 'Produit' }}</p>
-                      <p class="text-xs text-base-content/40">
-                        Qté {{ item.quantity || 1 }}<span v-if="prixLigne(item) != null"> · {{ prixLigne(item) }} € / jour</span><span v-if="jours > 1"> · {{ jours }} jours</span>
+                      <p class="text-xs text-base-content/40 flex items-center gap-1 flex-wrap">
+                        <span>Qté</span>
+                        <input v-if="modifiable && item.id" type="number" min="1" max="99" :value="item.quantity || 1"
+                          :aria-label="`Quantité de ${item.produits_id?.name}`"
+                          class="w-12 text-xs px-1 py-0.5 border border-base-300 rounded-md text-center font-semibold text-base-content bg-base-100 focus:outline-none focus:ring-1 focus:ring-primary"
+                          @change="changerQuantite(item, $event.target)" />
+                        <span v-else>{{ item.quantity || 1 }}</span>
+                        <template v-if="prixLigne(item) != null">
+                          <span>· {{ prixLigne(item) }} € / jour</span>
+                          <span v-if="jours > 1">· {{ jours }} jours</span>
+                          <span class="font-semibold text-base-content/60">· {{ euros(prixLigne(item) * (item.quantity || 1) * jours) }}</span>
+                        </template>
                       </p>
                     </div>
                     <div class="shrink-0 flex items-center gap-2">
+                      <!-- Disponibilité sur la période, tant qu'aucune unité n'est affectée -->
+                      <span v-if="dispos[item.produits_id?.id] && !productArticleGroups[item.produits_id?.id]?.principal?.length"
+                        class="text-[11px] px-2 py-0.5 rounded-full font-semibold" :class="TON[dispos[item.produits_id.id].ton]">
+                        {{ dispos[item.produits_id.id].texte }}
+                      </span>
                       <span v-if="productArticleGroups[item.produits_id?.id]?.principal?.length"
                         class="w-5 h-5 rounded-full bg-success/15 flex items-center justify-center">
                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="currentColor" class="w-3 h-3 text-success">
@@ -1704,9 +1875,13 @@ async function confirmStepBack() {
                   </div>
                   <span class="ml-auto text-sm font-bold text-primary">{{ livraisonMontant }} €</span>
                 </div>
-                <div v-if="reservation.delivery_address && livraison" class="px-4 py-2.5 border-t border-base-200 bg-base-200/30">
-                  <p class="text-[10px] font-semibold text-base-content/40 uppercase mb-0.5">Adresse de livraison</p>
-                  <p class="text-sm text-base-content/70">{{ reservation.delivery_address }}</p>
+                <div v-if="livraison && (modifiable || reservation.delivery_address)" class="px-4 py-2.5 border-t border-base-200 bg-base-200/30">
+                  <p class="text-[10px] font-semibold text-base-content/40 uppercase mb-1">Adresse de livraison</p>
+                  <input v-if="modifiable" v-model="adresseLivraison" type="text"
+                    placeholder="Adresse de livraison" aria-label="Adresse de livraison"
+                    class="w-full text-sm px-2 py-1 border border-base-300 rounded-lg focus:outline-none focus:ring-1 focus:ring-primary bg-base-100"
+                    @change="enregistrerAdresse" />
+                  <p v-else class="text-sm text-base-content/70">{{ reservation.delivery_address }}</p>
                 </div>
                 <div v-if="reservation.status === 'en_attente'" class="px-4 py-3 border-t border-base-200">
                   <label class="flex items-center gap-2 cursor-pointer select-none">
@@ -1833,7 +2008,10 @@ async function confirmStepBack() {
                       <input type="checkbox" v-model="avecTVA" class="checkbox checkbox-xs checkbox-primary" />
                       <span class="text-xs text-base-content/70">Assujetti TVA (afficher HT)</span>
                     </label>
-                    <button class="btn btn-xs gap-1 w-full" :class="devisGenereUrl ? 'btn-ghost' : 'btn-primary'"
+                    <p v-if="devisPerime" class="text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-lg px-2 py-1.5">
+                      Ce devis ne correspond plus à la réservation : regénérez-le avant de l'envoyer.
+                    </p>
+                    <button class="btn btn-xs gap-1 w-full" :class="devisPerime ? 'btn-warning' : devisGenereUrl ? 'btn-ghost' : 'btn-primary'"
                       :disabled="loading === 'generate_devis'" @click="generateDevis">
                       <span v-if="loading !== 'generate_devis'">{{ devisGenereUrl ? 'Regénérer' : 'Générer le devis' }}</span>
                       <span v-else class="loading loading-spinner loading-xs"></span>

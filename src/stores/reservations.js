@@ -2,6 +2,9 @@ import { defineStore } from 'pinia'
 import { getReservations, getAllReservationsProduits, getReservationsTarifs, patchReservation } from '../api/directus'
 import { montantReservation } from '../utils/tarifs'
 
+let actif   = null   // chargement en cours
+let suivant = null   // rechargement demandé pendant ce chargement
+
 export const useReservationsStore = defineStore('reservations', {
   state: () => ({
     reservations: [],
@@ -19,8 +22,13 @@ export const useReservationsStore = defineStore('reservations', {
     }
   },
   actions: {
-    async fetchReservations() {
-      if (this.loading) return
+    // Un seul chargement à la fois. Un appel lancé pendant un chargement attend sa fin puis recharge :
+    // il ne reçoit jamais des données plus anciennes que lui (utile juste après une création).
+    fetchReservations() {
+      if (!actif) return actif = this.loadReservations().finally(() => { actif = null })
+      return suivant ??= actif.then(() => { suivant = null; return this.fetchReservations() })
+    },
+    async loadReservations() {
       this.loading = true
       this.error = null
       try {

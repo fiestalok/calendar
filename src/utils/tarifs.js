@@ -14,6 +14,16 @@ export function livraisonFee(km) {
   return 150 + (km - 120)
 }
 
+// Tranche du barème de livraison, telle qu'elle est écrite sur le devis
+export function zoneLivraison(km) {
+  if (km <= 15)  return '0–15 km'
+  if (km <= 30)  return '15–30 km'
+  if (km <= 50)  return '30–50 km'
+  if (km <= 80)  return '50–80 km'
+  if (km <= 120) return '80–120 km'
+  return '> 120 km'
+}
+
 // Nombre de jours de location, compté comme sur le site : jours calendaires, bornes incluses
 // (du samedi au dimanche = 2 jours), jamais moins de 1.
 export function joursLocation(debut, fin) {
@@ -54,4 +64,32 @@ export function montantReservation(r, lignes) {
   const frais     = r.livraison ? livraisonFee(r.distance_km ?? 0) : 0
   const sousTotal = produits + frais - (r.remise ? remiseLivraison(frais) : 0)
   return sousTotal - plafonneRemise(r.remise_montant, sousTotal)
+}
+
+// Lignes du devis d'une réservation, dans l'ordre du document : produits, livraison, remises.
+// Mêmes paramètres que montantReservation, plus remise_libelle. Le total d'une ligne vaut
+// prixTTC × quantite × jours (jours absent = forfait), et leur somme vaut montantReservation.
+export function lignesDevis(r, lignes) {
+  const jours     = joursLocation(r.date_start, r.date_end)
+  const km        = r.distance_km ?? 0
+  const frais     = r.livraison ? livraisonFee(km) : 0
+  const remise    = r.remise ? remiseLivraison(frais) : 0
+  const sousTotal = totalProduits(lignes, jours) + frais - remise
+  const manuelle  = plafonneRemise(r.remise_montant, sousTotal)
+  return [
+    ...lignes.map(l => ({
+      designation: l.produits_id?.name ?? '—', quantite: l.quantity ?? 1, prixTTC: prixLigne(l), jours,
+    })),
+    r.livraison && {
+      designation: `Livraison & installation — forfait ${zoneLivraison(km)}`,
+      detail:      'Livraison, installation et désinstallation incluses',
+      quantite: 1, prixTTC: frais,
+    },
+    remise > 0 && {
+      designation: 'Remise connaissance',
+      detail:      `Livraison & installation offertes${frais > REMISE_LIVRAISON_PLAFOND ? ` (plafond ${REMISE_LIVRAISON_PLAFOND} €)` : ''}`,
+      quantite: 1, prixTTC: -remise,
+    },
+    manuelle > 0 && { designation: r.remise_libelle?.trim() || 'Remise', quantite: 1, prixTTC: -manuelle },
+  ].filter(Boolean)
 }

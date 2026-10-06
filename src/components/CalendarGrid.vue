@@ -13,7 +13,7 @@ const props = defineProps({
   reservations: { type: Array, default: () => [] }
 })
 
-defineEmits(['select-reservation'])
+defineEmits(['select-reservation', 'select-day'])
 
 const days = computed(() => {
   const ref = new Date(props.year, props.month, 1)
@@ -63,6 +63,7 @@ const forDay = (day) => {
         :is-current-month="isSameMonth(day, new Date(year, month, 1))"
         :reservations="forDay(day)"
         @select-reservation="$emit('select-reservation', $event)"
+        @select-day="$emit('select-day', $event)"
       />
     </div>
   </div>

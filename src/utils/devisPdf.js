@@ -2,6 +2,7 @@ import { addDays, format, parseISO } from 'date-fns'
 import { fr } from 'date-fns/locale'
 import { ENTREPRISE } from './entreprise.js'
 import { CGV } from './cgv.js'
+import { heureLocale } from './dates.js'
 
 // ── Charte graphique de hoplalok.fr ──────────────────────────────────────────
 const INK      = [45, 52, 54]     // --color-ink      #2d3436
@@ -480,13 +481,10 @@ function eur(n) {
 
 function fmtDateHeure(d) {
   if (!d) return '—'
-  const dt   = parseISO(d)
-  const jour = format(dt, 'EEE d MMM yyyy', { locale: fr })
-  const cap  = jour.charAt(0).toUpperCase() + jour.slice(1)
-  if (/^\d{4}-\d{2}-\d{2}$/.test(d)) return cap
-  const h = dt.getHours(), m = dt.getMinutes()
-  if (!h && !m) return cap
-  return `${cap} · ${h}h${m ? String(m).padStart(2, '0') : ''}`
+  const jour  = format(parseISO(d), 'EEE d MMM yyyy', { locale: fr })
+  const cap   = jour.charAt(0).toUpperCase() + jour.slice(1)
+  const heure = heureLocale(d)
+  return heure ? `${cap} · ${heure}` : cap
 }
 
 function oneLine(str) {

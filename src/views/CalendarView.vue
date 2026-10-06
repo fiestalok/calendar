@@ -3,10 +3,12 @@ import { ref, computed, onMounted } from 'vue'
 import { format, addMonths, subMonths } from 'date-fns'
 import { fr } from 'date-fns/locale'
 import { useReservationsStore } from '../stores/reservations'
+import { useNouveauDevisStore } from '../stores/nouveauDevis'
 import CalendarGrid from '../components/CalendarGrid.vue'
 import ReservationModal from '../components/ReservationModal.vue'
 
 const store = useReservationsStore()
+const nouveauDevis = useNouveauDevisStore()
 const current = ref(new Date())
 const selectedId = ref(null)
 
@@ -129,6 +131,7 @@ onMounted(() => store.fetchReservations())
       :month="month"
       :reservations="store.filteredReservations"
       @select-reservation="selectedId = $event"
+      @select-day="nouveauDevis.ouvrir(format($event, 'yyyy-MM-dd'))"
     />
 
     <ReservationModal :reservation="selected" @close="selectedId = null" />
